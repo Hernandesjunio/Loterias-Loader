@@ -9,5 +9,11 @@ public sealed class SmokeTests
     {
         Assert.True(true);
     }
+
+    [Fact]
+    public void V0_entrypoint_is_discoverable()
+    {
+        _ = SutContract.RequireEntryPointType();
+    }
 }
 

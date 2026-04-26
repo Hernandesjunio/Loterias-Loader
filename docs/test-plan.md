@@ -250,3 +250,7 @@ Como o brief cita logging estruturado como boa prática (sem fixar formato), as 
 - **API**: número de chamadas e endpoints chamados por execução (incluindo se encerrou antes de chamar a API).
 - **Tempo**: evidência de respeito à janela de 3 minutos (conclusão ou interrupção e retomada).
 
+## Evidência rastreável (V0 conforme contrato)
+
+- Arquivo de fechamento por evidência: `docs/evidence/v0-fechamento-por-evidencia.md`
+
