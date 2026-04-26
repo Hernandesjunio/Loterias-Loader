@@ -36,5 +36,26 @@ public static class EntryPoint
         var uc = sp.GetRequiredService<UpdateLotofacilResultsUseCase>();
         return uc.ExecuteAsync(ct);
     }
+
+    public static Task RunAsync(
+        ILotofacilApiClient api,
+        ILotofacilBlobStore blob,
+        ILotofacilStateStore state,
+        IClock clock,
+        IDelay delay,
+        CancellationToken ct)
+    {
+        var services = new ServiceCollection();
+        services.AddLotofacilLoaderV0Core();
+        services.AddSingleton(api);
+        services.AddSingleton(blob);
+        services.AddSingleton(state);
+        services.AddSingleton(clock);
+        services.AddSingleton(delay);
+
+        using var sp = services.BuildServiceProvider(validateScopes: true);
+        var uc = sp.GetRequiredService<UpdateLotofacilResultsUseCase>();
+        return uc.ExecuteAsync(ct);
+    }
 }
 
