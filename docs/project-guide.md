@@ -85,6 +85,19 @@ Estas convenções existem para melhorar **descoberta**, **revisão** e **evolu�
 - Token da API e credenciais/Access Key do Storage devem vir de **variáveis de ambiente**.
 - Nomes sugeridos (padrão `.NET` `Section__Key`) estão em `docs/brief.md`.
 
+### Estratégia de testes (sem ambiguidade de fronteira)
+
+Este repositório privilegia testes determinísticos e reprodutíveis.
+
+- **Integração com terceiros (Lotodicas)**:
+  - Em testes de integração automatizados, tratar como **Fake** (test double) para evitar não-determinismo de rede/serviço.
+  - Quando necessário, complementar com testes de contrato separados para garantir fidelidade do Fake ao contrato observado.
+- **Integração com Storage**:
+  - Preferir execução local controlada (ex.: emulador) para Blob+Table.
+  - Quando a qualidade exigir, aceitar execução com dependências em container (para isolar/limpar ambiente com consistência).
+
+> Nota: detalhes operacionais e cobertura vivem em `docs/test-plan.md`; este guia apenas fixa a fronteira e a intenção.
+
 ### Decisões que ficam fora do guia (via ADR)
 
 Quando a decisão tiver trade-offs e impacto operacional, registrar em ADR (ex.: timezone padrão do ambiente, estratégia de identidade para acesso ao Storage, nome do container do blob, política exata de rate limit/pacing).

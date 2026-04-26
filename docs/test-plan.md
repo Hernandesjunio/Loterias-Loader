@@ -31,6 +31,8 @@ O brief indica execução **a cada hora** e dá um exemplo de CRON (com segundos
 
 - `0 0 * * * *` (a cada hora, no minuto 0)
 
+No recorte incremental (V0.1+), o schedule do Timer Trigger deve ser **configurável por ambiente** via app setting, mantendo o valor como entrada canônica (ver `docs/spec-driven-execution-guide.md`, Adendo V0.1).
+
 Nos testes, deve ser possível disparar a execução (manual/forçada) e também validar que a configuração de agendamento usada no deploy corresponde ao CRON acordado (ou equivalente “a cada hora”).
 
 ### Dependências externas (devem ser controladas no teste)
@@ -42,10 +44,28 @@ Nos testes, deve ser possível disparar a execução (manual/forçada) e também
   - **Blob Storage** (documento com `draws`, blob nomeado `Lotofacil`)
   - **Table Storage** (estado do loader; exemplo discutido: tabela `LotofacilState`, PK `Lotofacil`, RK `Loader`)
 
+#### Política para testes de integração (determinismo)
+
+- **Lotodicas (terceiro)**: deve ser tratado como **Fake** em testes de integração automatizados, com respostas determinísticas para:
+  - endpoint “último concurso” (`/results/last`)
+  - endpoint “concurso por id” (`/results/{id}`)
+
+Justificativa: reduzir não-determinismo e flakiness causados por rede/serviços remotos, mantendo a suite reprodutível (ver referências no fim deste documento).
+
+#### Storage para testes de integração (preferência sem Docker; fallback com Docker)
+
+O objetivo é executar com um backend de Blob+Table controlado e limpo por execução.
+
+- **Opção preferida (sem Docker, quando disponível)**: executar Azurite localmente (processo do desenvolvedor/CI), apontando a `Storage__ConnectionString` para o emulador.
+- **Opção de maior fidelidade operacional (com Docker, quando necessário)**: executar Azurite em container e apontar `Storage__ConnectionString` para o endpoint do container.
+
+Ambas as opções são aceitáveis; priorizar **qualidade e determinismo** acima de conveniência.
+
 ### Configuração por variáveis de ambiente (normativo na V0)
 
 Os testes devem parametrizar a execução usando as variáveis (nomes sugeridos):
 
+- `LotofacilLoader__TimerSchedule` (V0.1+; schedule configurável por app setting)
 - `Lotodicas__BaseUrl`
 - `Lotodicas__Token`
 - `Storage__ConnectionString` (ou alternativa equivalente por nome+chave, desde que via Access Key em ambiente)
@@ -128,6 +148,15 @@ O brief não define uma suite automatizada existente; portanto este plano descre
 - **Testes de integração controlada**: executar o fluxo completo contra:
   - API simulada (respostas determinísticas por id/last)
   - Storage (Blob + Table) controlado para observar gravações e estados
+
+### Seed de dados (pré-condições) para integração
+
+Para executar “ponta a ponta” com determinismo, o teste deve conseguir **semear** o Storage antes de disparar a Function.
+
+- **Seed mínimo (Table Storage)**:
+  - criar/atualizar o registro de state (PK `Lotofacil`, RK `Loader`) com `LastLoadedContestId = N` e `LastLoadedDrawDate` coerente com o cenário.
+- **Seed opcional (Blob)**:
+  - escrever um blob inicial `Lotofacil` com `draws` (para cenários de bootstrap / correção de inconsistência, quando aplicável).
 
 ## Casos de teste (detalhados)
 
@@ -253,4 +282,10 @@ Como o brief cita logging estruturado como boa prática (sem fixar formato), as 
 ## Evidência rastreável (V0 conforme contrato)
 
 - Arquivo de fechamento por evidência: `docs/evidence/v0-fechamento-por-evidencia.md`
+
+## Referências técnicas (embasamento)
+
+- Microsoft Learn: Timer trigger permite schedule por app setting usando `%...%` e discute timezone/schedule em Azure Functions: `https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-timer`
+- Martin Fowler: reduzir não-determinismo com Test Doubles para serviços remotos: `https://martinfowler.com/articles/nonDeterminism.html`
+- Martin Fowler: integração “narrow” com doubles + contract tests: `https://martinfowler.com/bliki/IntegrationTest.html`
 

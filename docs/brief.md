@@ -27,7 +27,7 @@ O blob será disponibilizado a aplicações externas via **SAS token** (o consum
 ## Restrições e comportamento acordados
 
 - **Calendário do sorteio**: os sorteios ocorrem **somente em dias úteis**, **às 20h**. A avaliação de “hoje” e “20h” depende de uma **timezone explicitamente definida** no ambiente de execução (este documento não fixa a timezone).
-- **Frequência**: o CRON pode executar **a cada hora**; foi citado como exemplo `0 0 * * * *` (formato com segundos típico do Timer Trigger do Azure Functions).
+- **Frequência**: o schedule do Timer Trigger deve ser **configurável por ambiente** (sem hardcode em código). Valor recomendado para execução “a cada hora”: `0 0 * * * *` (formato com segundos típico do Timer Trigger do Azure Functions).
 - **Janela máxima por execução**: **3 minutos** de trabalho (janela interna), para não estourar o tempo da function no host.
 - **API e cadência**:
   - o resultado vem de um serviço gratuito; foi referido que o serviço pago permite **uma conexão por minuto**;
@@ -90,6 +90,7 @@ Na conversa foram propostos (como exemplo):
 
 Nomes sugeridos na conversa (padrão `Section__Key`):
 
+- `LotofacilLoader__TimerSchedule`
 - `Lotodicas__BaseUrl`
 - `Lotodicas__Token`
 - `Storage__ConnectionString`

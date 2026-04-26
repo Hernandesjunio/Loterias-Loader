@@ -227,6 +227,8 @@ Critério de pronto (prova, sem ambiguidade):
 - suíte de testes existente continua passando.
 ```
 
+> Nota incremental: se o recorte adotado for V0.1+, o schedule do Timer Trigger deve ser resolvido por configuração (ver `docs/spec-driven-execution-guide.md`, seção 4.1). Esta fase permanece válida; o adendo apenas altera a **fonte** do CRON.
+
 ## Fase 7 — Evidência e fechamento da V0
 
 ```md
@@ -243,5 +245,53 @@ Referências obrigatórias:
 
 Critério de pronto:
 - existe evidência rastreável do comportamento V0 conforme contrato.
+```
+
+## Fase 8 — Teste de integração “ponta a ponta” controlado (sem Docker, quando possível)
+
+```md
+Implemente apenas a suíte de teste de integração que executa o fluxo completo da Function (trigger → caso de uso → persistências),
+mantendo determinismo e isolando o terceiro (Lotodicas) como Fake.
+
+Objetivo (único):
+- validar o processo como um todo, com dependências controladas e reprodutíveis.
+
+Fatia do spec que estou materializando:
+- docs/spec-driven-execution-guide.md (Contrato V0 + Adendo V0.1 quando aplicável)
+- docs/test-plan.md (seção de integração controlada)
+
+Dependências (regra):
+- Lotodicas (terceiro): SEMPRE Fake (servidor HTTP local com respostas determinísticas para:
+  - `/results/last`
+  - `/results/{id}`
+)
+- Storage: preferir emulador local (Azurite) quando disponível sem Docker.
+
+Pré-condições (seed determinístico):
+- popular Table Storage com o state inicial necessário ao cenário (ex.: `LastLoadedContestId = N`)
+- opcionalmente popular o blob `Lotofacil` (quando o cenário cobrir “bootstrap por blob”)
+
+Critérios de pronto (prova):
+- o teste executa o fluxo completo com entradas/saídas determinísticas
+- os asserts validam:
+  - chamadas esperadas ao Fake do Lotodicas (endpoints e parâmetros)
+  - conteúdo do blob final (golden ou comparação canônica)
+  - state final no Table (checkpoint consistente e ordem blob→table)
+```
+
+## Fase 8.1 — Opcional: ambiente de integração via Docker (quando necessário para qualidade)
+
+```md
+Implemente apenas a infraestrutura de testes para subir dependências via Docker quando não houver alternativa de qualidade sem Docker.
+
+Escopo típico:
+- Azurite em container (Blob + Table), com portas fixas e data dir isolado por execução de teste.
+
+Restrições:
+- o teste deve continuar determinístico (ambiente limpo a cada execução)
+- a suite deve ser executável localmente e replicável em CI no futuro
+
+Critério de pronto:
+- `dotnet test` (ou equivalente) sobe/usa a dependência e finaliza limpando recursos (sem “lixo” persistente)
 ```
 

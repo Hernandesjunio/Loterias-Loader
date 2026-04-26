@@ -100,6 +100,8 @@ Todas as entradas abaixo são **variáveis de ambiente** (config), lidas no iní
   - **Valor normativo (V0)**: **`Lotofacil`** (case-sensitive).
 - **`Storage__LotofacilStateTable`** (obrigatória)
   - **Valor normativo (V0)**: **`LotofacilState`**.
+- **Agendamento do Timer Trigger (V0.1+; adendo incremental)**:
+  - ver seção **4.1** (“Agendamento configurável por configuração do host”), que introduz `LotofacilLoader__TimerSchedule` como entrada canônica obrigatória para V0.1+.
 - **Timezone/relógio (normativo, não configurável na V0)**:
   - **Timezone de referência**: `America/Sao_Paulo` (IANA).
   - **Como derivar “agora” e “hoje”**: obter `nowLocal` convertendo um relógio de referência (UTC) para `America/Sao_Paulo`; então `todayLocal = date(nowLocal)` (apenas a data nessa timezone).
@@ -113,6 +115,24 @@ Todas as entradas abaixo são **variáveis de ambiente** (config), lidas no iní
 
 - **CRON normativo (Azure Functions Timer Trigger, com segundos)**: **`0 0 * * * *`**.
   - Interpretação: a cada hora, no minuto 0, segundo 0.
+
+### 4.1) Adendo incremental — Agendamento configurável por configuração do host (V0.1)
+
+Este adendo existe para remover rigidez operacional (CRON hardcoded) e permitir ajustar o schedule por ambiente **sem redeploy**, mantendo o contrato explícito (sem defaults ocultos).
+
+- **Nova entrada canônica obrigatória (V0.1)**:
+  - **`LotofacilLoader__TimerSchedule`** (obrigatória)
+    - **Formato**: expressão NCRONTAB do Timer Trigger do Azure Functions (6 campos, com segundos).
+    - **Valor recomendado** (equivalente ao V0): `0 0 * * * *`.
+- **Resolução do schedule (normativo, V0.1)**:
+  - O Timer Trigger deve referenciar o schedule por *name resolver* usando a sintaxe `%...%` (ex.: `"%LotofacilLoader__TimerSchedule%"`).
+  - O valor deve vir de **Application Settings / variáveis de ambiente** do Function App (e `local.settings.json` em desenvolvimento local).
+- **Compatibilidade**:
+  - Este adendo **supersede** a regra “CRON fixo em código” do item 4 para execuções V0.1+.
+  - O valor do CRON continua sendo parte do contrato (só mudou a *fonte* do valor: config ao invés de código).
+
+Referência técnica (normativa do runtime):
+- Microsoft Learn: Timer trigger suporta schedule por app setting usando `%ScheduleAppSetting%`.
 
 ### 5) Limites, janelas e timeouts (V0)
 
