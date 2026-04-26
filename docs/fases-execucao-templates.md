@@ -198,6 +198,35 @@ Critério de pronto:
 - testes de contrato continuam passando; testes de integração (se existirem) validam IO real.
 ```
 
+## Fase 6.5 — Superfície pública (Azure Function Timer Trigger)
+
+```md
+Implemente apenas a **superfície pública** do recorte V0: uma **Azure Function** com **Timer Trigger** que orquestra a execução do caso de uso do núcleo (trigger fino), sem duplicar semântica.
+
+Inclui (mínimo necessário):
+- criar o projeto/pasta da Function (ex.: `src/FunctionApp/` ou nome explicitado no repositório);
+- adicionar `host.json` no projeto da Function;
+- implementar Timer Trigger com CRON **normativo** `0 0 * * * *`;
+- ler e validar **todas** as variáveis de ambiente obrigatórias do Contrato V0 (falha dura sem efeitos quando inválidas);
+- wiring de DI para registrar adaptadores reais (HTTP API client, Blob store, Table store);
+- logging estruturado de **motivo de parada** (`reason_stop`) conforme seção de Observabilidade do Contrato V0.
+
+Referências obrigatórias:
+- docs/spec-driven-execution-guide.md (Contrato V0 — seções 1, 2, 4 e 14)
+- docs/adrs/0001-lotofacil-loader-azure-function.md
+- docs/project-guide.md
+
+Arquivos esperados (exemplos):
+- src/FunctionApp/**/*
+- src/FunctionApp/host.json
+
+Critério de pronto (prova, sem ambiguidade):
+- o Timer Trigger existe e compila no projeto da Function;
+- a Function chama o caso de uso do núcleo e permanece “fina” (sem regras de domínio no handler);
+- execução local/deploy é possível apenas com as variáveis de ambiente do contrato (sem inferência/defaults ocultos);
+- suíte de testes existente continua passando.
+```
+
 ## Fase 7 — Evidência e fechamento da V0
 
 ```md

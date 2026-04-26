@@ -376,6 +376,29 @@ Com base nas decisões em `docs/adrs/*` e no **Contrato V0 (normativo)** acima, 
 - **Table store**:
   - lê state, escreve com concorrência otimista (ETag)
 
+### 6.5) Materializar a superfície pública (Azure Function Timer Trigger)
+
+Objetivo: tornar o recorte V0 **executável no runtime normativo** (Azure Functions) sem mover semântica para o trigger.
+
+Inclui (mínimo necessário):
+
+- criar o projeto/pasta de function (ex.: `src/FunctionApp/`) e garantir que ele:
+  - referencia o núcleo (`Application/Domain`) e a composição/infra necessárias;
+  - contém `host.json` (config do host).
+- implementar o handler do **Timer Trigger** (CRON normativo `0 0 * * * *`) como **orquestração**:
+  - ler/validar as variáveis de ambiente **obrigatórias** (seção 2 do Contrato V0);
+  - configurar DI (registrar adaptadores reais: API client, blob store, table store);
+  - chamar o caso de uso do núcleo.
+- observabilidade:
+  - emitir logs estruturados com `reason_stop` e campos mínimos (seção 14 do Contrato V0).
+
+Critérios objetivos de pronto (remoção de ambiguidade):
+
+- existe um Timer Trigger real no projeto da Function (não apenas entry point para testes);
+- execução local (host) é possível com as variáveis de ambiente documentadas, sem “defaults ocultos”;
+- a função chama o caso de uso do núcleo (trigger fino) e não duplica regras de domínio;
+- testes existentes continuam passando (o runtime não quebra o contrato do núcleo).
+
 ### 7) Fechar evidência da V0 (reprodutível)
 
 - Rodar suíte de testes e registrar (em `docs/test-plan.md` ou arquivo de evidência) o que foi validado

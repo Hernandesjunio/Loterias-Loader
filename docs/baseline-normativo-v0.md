@@ -49,6 +49,28 @@ O contrato público observado para a V0 é o **Contrato V0 — Lotofacil Loader 
 
 Observação: o ADR `0001` deve ser lido como decisão de recorte/arquitetura; ele **não substitui** o contrato normativo.
 
+## “V0 completa” (definição de pronto do recorte)
+
+Para evitar ambiguidade entre “núcleo implementado” e “superfície pública materializada”, a V0 deste repositório só deve ser considerada **completa** quando **ambos** estiverem verdadeiros:
+
+- **Núcleo (semântica por contrato)**:
+  - existe um caso de uso executável (host-agnóstico) que implementa as regras do **Contrato V0 (normativo)**;
+  - testes de contrato provam os comportamentos normativos (encerramentos antecipados, janela, pacing/rate-limit, idempotência, ordem blob→state).
+- **Superfície pública (por contrato)**:
+  - existe uma **Azure Function** (Timer Trigger) que:
+    - lê e valida as **entradas canônicas** via ambiente/config;
+    - instancia/wireia portas/adaptadores reais (HTTP + Blob + Table);
+    - chama o caso de uso (trigger fino; sem lógica de domínio);
+    - emite logs com **motivos de parada** conforme contrato (observabilidade).
+
+Sinais objetivos (artefatos) de que a superfície pública foi materializada:
+
+- existe um projeto/pasta equivalente a `src/FunctionApp/` (ou nome explicitado), contendo:
+  - um handler com **Timer Trigger** (binding);
+  - a referência aos projetos/camadas do núcleo (`Application`, `Domain`, `Infrastructure`, `Composition`).
+- existe `host.json` no projeto da function (config do host).
+- existe configuração local/deploy (ex.: `local.settings.json` fora de versionamento, e/ou documentação de variáveis de ambiente) suficiente para executar a function sem inferência.
+
 ## Determinismo e reprodutibilidade (normativas)
 
 - **Sem defaults ocultos**: decisões que afetam “o que acontece” devem estar explicitadas no Contrato V0 (ex.: timezone, CRON, regra do 20h, dia útil, invariantes do blob, política de conflito por ETag).
