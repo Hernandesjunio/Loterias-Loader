@@ -52,6 +52,9 @@ logs/
 # Azure Functions (local-only settings)
 **/local.settings.json
 
+# Azurite (local emulator)
+.azurite/
+
 # Python
 __pycache__/
 *.pyc

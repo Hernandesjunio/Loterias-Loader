@@ -22,7 +22,8 @@ public sealed class LotofacilLoaderTimerFunction
 
     [Function(nameof(LotofacilLoaderTimerFunction))]
     public async Task RunAsync(
-        [TimerTrigger("0 0 * * * *")] TimerInfo timer,
+        // Schedule configurável por App Setting (name resolver): docs/spec-driven-execution-guide.md
+        [TimerTrigger("%LotofacilLoader__TimerSchedule%")] TimerInfo timer,
         CancellationToken ct)
     {
         // Trigger fino: valida config + chama caso de uso (sem duplicar semântica).

@@ -80,7 +80,7 @@ Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um regi
 
 ## Restrições e comportamento (resumo)
 
-- **Frequência do timer**: CRON **a cada hora** (ex.: `0 0 * * * *`).
+- **Frequência do timer**: **configurável por ambiente** via `LotofacilLoader__TimerSchedule` (ex.: `0 0 * * * *`).
 - **Janela de execução**: processamento com **janela interna máxima de 3 minutos**.
 - **Rate limit / resiliência**: quando houver limitação (ex.: **1 pedido/minuto**) e/ou respostas **429**, o fluxo considera **retry** (Polly) e respeito a `Retry-After` quando existir, desde que caiba na janela.
 - **Ordem de persistência**: primeiro **gravar o blob**, depois **atualizar o estado** no Table Storage.
@@ -89,6 +89,7 @@ Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um regi
 
 Os nomes abaixo foram sugeridos na conversa como padrão de configuração:
 
+- `LotofacilLoader__TimerSchedule`
 - `Lotodicas__BaseUrl`
 - `Lotodicas__Token`
 - `Storage__ConnectionString`
@@ -116,6 +117,7 @@ O exemplo abaixo contém:
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
     "AzureWebJobsStorage": "<connection-string-para-storage-ou-emulador>",
 
+    "LotofacilLoader__TimerSchedule": "0 0 * * * *",
     "Lotodicas__BaseUrl": "https://www.lotodicas.com.br",
     "Lotodicas__Token": "<seu-token>",
 
