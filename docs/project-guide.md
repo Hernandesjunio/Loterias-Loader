@@ -51,6 +51,23 @@ docs/
   adrs/
 ```
 
+### Organização de pastas e arquivos (convenções do repositório)
+
+Estas convenções existem para melhorar **descoberta**, **revisão** e **evolução por fatias** (spec-driven), mantendo as camadas e contratos fáceis de navegar.
+
+- **Preferência: 1 tipo público por arquivo**:
+  - Classes / interfaces / enums / records **públicos** devem, por padrão, viver em arquivos separados.
+  - O nome do arquivo deve bater com o nome do tipo (ex.: `ILotofacilApiClient.cs`, `LotofacilDraw.cs`).
+- **Pastas por camada e responsabilidade** (dentro de cada projeto/camada):
+  - Ex.: `Ports/`, `UseCases/`, `Models/`, `Options/`, `Http/`, `Storage/`.
+  - Evitar “pasta genérica” (`Misc`, `Common`) sem critério; quando necessário, explicitar o motivo.
+- **Exceções aceitáveis (explícitas)**:
+  - Tipos **privados** e estritamente locais (helpers internos) podem ficar no mesmo arquivo do tipo principal.
+  - Tipos muito pequenos e coesos podem ser agrupados quando isso melhora legibilidade (ex.: `Options` relacionadas), desde que o arquivo não vire “depósito”.
+  - Em testes, agrupar fakes/fixtures no mesmo arquivo pode ser aceitável quando isso reduz fricção e mantém a fatia pequena.
+
+> Regra prática: se um arquivo começar a concentrar “vários assuntos” (porta + modelo + caso de uso, etc.), ele deve ser dividido.
+
 ### Portas (interfaces) e adaptadores (implementações)
 
 - **Portas (Application → exterior)**:

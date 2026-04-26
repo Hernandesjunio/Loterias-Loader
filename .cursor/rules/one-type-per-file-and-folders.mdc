@@ -1,0 +1,35 @@
+---
+description: Convenções de organização (1 tipo por arquivo, pastas por responsabilidade)
+globs:
+  - src/**/*.cs
+  - tests/**/*.cs
+alwaysApply: true
+---
+
+# Convenções de organização do código
+
+Objetivo: manter o código fácil de navegar e revisar, com mudanças pequenas e rastreáveis.
+
+## Regra principal
+
+- **1 tipo público por arquivo**: por padrão, não agrupar múltiplos tipos públicos (class/interface/enum/record) no mesmo `.cs`.
+- **Nome do arquivo = nome do tipo** (ex.: `LotofacilDraw.cs`, `ILotofacilApiClient.cs`).
+
+## Organização por pastas
+
+- Usar pastas por **responsabilidade** dentro de cada camada/projeto (ex.: `Ports/`, `UseCases/`, `Models/`, `Options/`, `Http/`, `Storage/`).
+- Evitar pastas “genéricas” (`Common`, `Misc`) sem critério; se surgirem, justificar no PR/commit ou no documento do projeto.
+
+## Exceções permitidas (quando melhoram a coesão)
+
+- Tipos **privados** e estritamente locais (helpers internos) podem ficar no mesmo arquivo do tipo principal.
+- Tipos pequenos e fortemente coesos podem ser agrupados (ex.: options/constantes relacionadas), desde que:
+  - o arquivo continue com **um único assunto** claro; e
+  - a descoberta não piore (sem virar “arquivo-balão”).
+- Em `tests/`, é aceitável agrupar fakes/fixtures relacionados quando isso reduz fricção e mantém a fatia pequena.
+
+## Regra de desempate (quando houver dúvida)
+
+- Preferir **dividir**.
+- Se um arquivo começar a concentrar “porta + modelo + caso de uso” (ou assuntos diferentes), dividir imediatamente.
+
