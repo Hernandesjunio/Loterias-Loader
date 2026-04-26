@@ -60,6 +60,16 @@ Os nomes abaixo foram sugeridos na conversa como padrão de configuração:
 
 Os segredos (ex.: token e credenciais do Storage) **não devem** ficar hardcoded no código-fonte.
 
+## Hooks de Git (qualidade local)
+
+Este repositório inclui um hook `pre-push` para **bloquear pushes** quando `dotnet test` falhar.
+
+- **Instalar (Git Bash)**:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
 ## Não-objetivos
 
 - Não há promessa de “previsão”, “melhor chance” ou qualquer garantia de resultado.

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bloqueia push quando testes falham.
+# Instalação: copie este arquivo para .git/hooks/pre-push e torne executável.
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "[pre-push] Rodando testes (.NET)..."
+dotnet test
+
+echo "[pre-push] OK"
+
