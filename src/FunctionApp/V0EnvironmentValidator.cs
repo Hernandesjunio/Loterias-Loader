@@ -17,6 +17,9 @@ public sealed class V0EnvironmentValidator
         var baseUrl = (_cfg["Lotodicas:BaseUrl"] ?? _cfg["Lotodicas__BaseUrl"])?.Trim();
         var token = (_cfg["Lotodicas:Token"] ?? _cfg["Lotodicas__Token"])?.Trim();
 
+        // Adendo V0.1 — schedule configurável por ambiente.
+        var timerSchedule = (_cfg["LotofacilLoader:TimerSchedule"] ?? _cfg["LotofacilLoader__TimerSchedule"])?.Trim();
+
         var conn = (_cfg["Storage:ConnectionString"] ?? _cfg["Storage__ConnectionString"])?.Trim();
         var container = (_cfg["Storage:BlobContainer"] ?? _cfg["Storage__BlobContainer"])?.Trim();
         var blobName = (_cfg["Storage:LotofacilBlobName"] ?? _cfg["Storage__LotofacilBlobName"])?.Trim();
@@ -41,6 +44,11 @@ public sealed class V0EnvironmentValidator
         if (string.IsNullOrWhiteSpace(token))
         {
             return ValidationResult.Invalid("Lotodicas__Token é obrigatório");
+        }
+
+        if (string.IsNullOrWhiteSpace(timerSchedule))
+        {
+            return ValidationResult.Invalid("LotofacilLoader__TimerSchedule é obrigatório");
         }
 
         if (string.IsNullOrWhiteSpace(conn))
