@@ -4,6 +4,17 @@ Estes templates são pedidos **copy/paste** para desenvolvimento assistido por I
 
 Regra: cada template deve citar a **fatia** do spec que está sendo materializada e o **teste** que prova o comportamento.
 
+## Coerência com `docs/spec-driven-execution-guide.md` (como ler)
+
+Estes templates são uma forma operacional (copy/paste) do que o guia define como ordem recomendada de trabalho e como contrato mínimo.
+
+- **Fonte normativa**: `docs/spec-driven-execution-guide.md`
+- **Gate não negociável**: **não avance para as fases 2+** sem o **“Contrato V0 — Lotofacil Loader (normativo)”** estar fechado no guia.
+- **Seções do guia que estes templates materializam**:
+  - “Contrato mínimo que toda fatia deve explicitar”
+  - “Anti-alucinação: decisões que o contrato da V0 DEVE fixar”
+  - “Ordem recomendada de trabalho (passo a passo, completo)”
+
 ## Template — Pedido atômico (base)
 
 ```md
