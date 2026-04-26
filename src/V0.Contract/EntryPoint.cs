@@ -34,7 +34,7 @@ public static class EntryPoint
 
         using var sp = services.BuildServiceProvider(validateScopes: true);
         var uc = sp.GetRequiredService<UpdateLotofacilResultsUseCase>();
-        return uc.ExecuteAsync(ct);
+        return RunAsyncInternal(uc, ct);
     }
 
     public static Task RunAsync(
@@ -55,7 +55,12 @@ public static class EntryPoint
 
         using var sp = services.BuildServiceProvider(validateScopes: true);
         var uc = sp.GetRequiredService<UpdateLotofacilResultsUseCase>();
-        return uc.ExecuteAsync(ct);
+        return RunAsyncInternal(uc, ct);
+    }
+
+    private static async Task RunAsyncInternal(UpdateLotofacilResultsUseCase uc, CancellationToken ct)
+    {
+        _ = await uc.ExecuteAsync(ct);
     }
 }
 

@@ -26,23 +26,40 @@ public sealed class UpdateLotofacilResultsUseCase
         _state = state;
     }
 
-    public async Task ExecuteAsync(CancellationToken ct)
+    public async Task<UpdateLotofacilResultsOutcome> ExecuteAsync(CancellationToken ct)
     {
         // Contrato V0 — docs/spec-driven-execution-guide.md (seções 10–13).
         var nowUtc = _clock.UtcNow;
-        var deadlineUtc = nowUtc.AddSeconds(180);
+        const int deadlineSeconds = 180;
+        var deadlineUtc = nowUtc.AddSeconds(deadlineSeconds);
 
         var nowLocal = ConvertToSaoPaulo(nowUtc);
         var todayLocal = DateOnly.FromDateTime(nowLocal.DateTime);
 
         if (!IsBusinessDay(todayLocal))
         {
-            return;
+            return new UpdateLotofacilResultsOutcome(
+                ReasonStop: ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY,
+                LastLoadedContestId: 0,
+                LatestId: null,
+                ProcessedCount: 0,
+                PersistedLastId: 0,
+                DeadlineSeconds: deadlineSeconds,
+                Timezone: "America/Sao_Paulo"
+            );
         }
 
         if (!HasPassed20h(nowLocal, todayLocal))
         {
-            return;
+            return new UpdateLotofacilResultsOutcome(
+                ReasonStop: ReasonStop.EARLY_EXIT_BEFORE_20H,
+                LastLoadedContestId: 0,
+                LatestId: null,
+                ProcessedCount: 0,
+                PersistedLastId: 0,
+                DeadlineSeconds: deadlineSeconds,
+                Timezone: "America/Sao_Paulo"
+            );
         }
 
         var state = await ReadOrInitializeStateAsync(deadlineUtc, ct);
@@ -51,19 +68,43 @@ public sealed class UpdateLotofacilResultsUseCase
         if (state.LastLoadedDrawDate is not null &&
             string.Equals(state.LastLoadedDrawDate, todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal))
         {
-            return;
+            return new UpdateLotofacilResultsOutcome(
+                ReasonStop: ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY,
+                LastLoadedContestId: state.LastLoadedContestId,
+                LatestId: null,
+                ProcessedCount: 0,
+                PersistedLastId: state.LastLoadedContestId,
+                DeadlineSeconds: deadlineSeconds,
+                Timezone: "America/Sao_Paulo"
+            );
         }
 
         // Antes de chamar "último": orçamento mínimo (seção 5).
         if (!HasMinimumBudget(deadlineUtc))
         {
-            return;
+            return new UpdateLotofacilResultsOutcome(
+                ReasonStop: ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
+                LastLoadedContestId: state.LastLoadedContestId,
+                LatestId: null,
+                ProcessedCount: 0,
+                PersistedLastId: state.LastLoadedContestId,
+                DeadlineSeconds: deadlineSeconds,
+                Timezone: "America/Sao_Paulo"
+            );
         }
 
         var latestId = await _api.GetLatestContestIdAsync(ct);
         if (latestId <= state.LastLoadedContestId)
         {
-            return;
+            return new UpdateLotofacilResultsOutcome(
+                ReasonStop: ReasonStop.EARLY_EXIT_ALREADY_ALIGNED,
+                LastLoadedContestId: state.LastLoadedContestId,
+                LatestId: latestId,
+                ProcessedCount: 0,
+                PersistedLastId: state.LastLoadedContestId,
+                DeadlineSeconds: deadlineSeconds,
+                Timezone: "America/Sao_Paulo"
+            );
         }
 
         var doc = await ReadBlobDocumentAsync(ct);
@@ -75,6 +116,7 @@ public sealed class UpdateLotofacilResultsUseCase
 
         // Rate-limit/pacing mínimo (seção 12) — controlado por início de request.
         DateTimeOffset? lastRequestStartUtc = null;
+        var processedCount = 0;
 
         for (var id = nextId; id <= latestId; id++)
         {
@@ -117,11 +159,20 @@ public sealed class UpdateLotofacilResultsUseCase
             drawsById[draw.ContestId] = draw;
             lastPersistableId = id;
             lastPersistableDrawDate = draw.DrawDate;
+            processedCount++;
         }
 
         if (lastPersistableId == state.LastLoadedContestId)
         {
-            return;
+            return new UpdateLotofacilResultsOutcome(
+                ReasonStop: ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
+                LastLoadedContestId: state.LastLoadedContestId,
+                LatestId: latestId,
+                ProcessedCount: processedCount,
+                PersistedLastId: state.LastLoadedContestId,
+                DeadlineSeconds: deadlineSeconds,
+                Timezone: "America/Sao_Paulo"
+            );
         }
 
         // Persistência: blob primeiro, table depois (seção 13).
@@ -141,6 +192,16 @@ public sealed class UpdateLotofacilResultsUseCase
         };
 
         await _state.WriteRawAsync(newState, ct);
+
+        return new UpdateLotofacilResultsOutcome(
+            ReasonStop: ReasonStop.COMPLETED_SUCCESS,
+            LastLoadedContestId: state.LastLoadedContestId,
+            LatestId: latestId,
+            ProcessedCount: processedCount,
+            PersistedLastId: lastPersistableId,
+            DeadlineSeconds: deadlineSeconds,
+            Timezone: "America/Sao_Paulo"
+        );
     }
 
     private bool HasMinimumBudget(DateTimeOffset deadlineUtc) =>
