@@ -14,12 +14,13 @@ O sistema no recorte atual é uma **Azure Function** (C#/.NET) com **Timer Trigg
 - **Blob Storage**: um documento JSON (blob `Lotofacil`) para consumo externo via SAS (consumo fora do escopo do loader).
 - **Table Storage**: estado mínimo (“último concurso carregado”) para retomar progresso e evitar trabalho redundante.
 
-Fonte de verdade do contexto discutido:
+Fontes de verdade (normativas) para este recorte:
 
-- `docs/brief.md`
-- `docs/lotofacil-loader-azure-function-contexto.md`
+- este ADR (`docs/adrs/0001-lotofacil-loader-azure-function.md`)
+- `docs/spec-driven-execution-guide.md` (seção **Contrato V0 — Lotofacil Loader (normativo)**)
+- `docs/fases-execucao-templates.md`
 
-## Decisão (rascunho)
+## Decisão (V0)
 
 Adotar uma arquitetura em camadas/ports & adapters dentro de **um único Function App**, com:
 
@@ -39,7 +40,7 @@ Adotar uma arquitetura em camadas/ports & adapters dentro de **um único Functio
   - Mais “arquitetura” no início (mais arquivos e DI).
   - Exige disciplina para não “vazar” IO e config para dentro do caso de uso.
 
-## Decisões em aberto (validar)
+## Decisões em aberto (fora da V0)
 
 ### 1) Timezone de referência para “dia útil” e “20h”
 
@@ -69,7 +70,7 @@ Adotar uma arquitetura em camadas/ports & adapters dentro de **um único Functio
 
 - **Problema**: existe restrição “1 pedido/minuto” mencionada e uma janela interna de 3 minutos; isso limita quantos concursos podem ser preenchidos por execução.
 - **Opções**:
-  - (A) Respeitar `Retry-After` e aplicar pacing mínimo (ex.: 60s) quando aplicável; processar no máximo 1–3 concursos por execução dependendo do tempo restante.
+  - (A) Respeitar `Retry-After` e aplicar pacing mínimo (ex.: 30s) quando aplicável; processar no máximo 1–6 concursos por execução dependendo do tempo restante.
   - (B) Implementar “modo bootstrap” com execução manual/temporária para preencher histórico (fora do timer), mantendo o timer para manutenção.
 - **Pergunta para validação**: precisamos de um caminho explícito para bootstrap histórico?
 
@@ -91,5 +92,6 @@ Adotar uma arquitetura em camadas/ports & adapters dentro de **um único Functio
 
 ## Referências
 
-- `docs/brief.md`
-- `docs/lotofacil-loader-azure-function-contexto.md`
+- `docs/spec-driven-execution-guide.md`
+- `docs/fases-execucao-templates.md`
+

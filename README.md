@@ -17,10 +17,11 @@ O sistema mantém um **JSON** num **Blob Storage** (para consumo externo via **S
 
 ## Fonte de verdade (documentação)
 
-Este repositório segue uma abordagem **docs-first**. A descrição normativa do comportamento discutido está em:
+Este repositório segue uma abordagem **docs-first**. As fontes de verdade são:
 
-- [`docs/lotofacil-loader-azure-function-contexto.md`](docs/lotofacil-loader-azure-function-contexto.md)
-- [`docs/brief.md`](docs/brief.md)
+- `docs/adrs/0001-lotofacil-loader-azure-function.md`
+- `docs/spec-driven-execution-guide.md` (inclui o **Contrato V0** normativo)
+- `docs/fases-execucao-templates.md`
 
 ## Dados persistidos no blob
 
@@ -32,17 +33,16 @@ O blob contém um documento JSON com a chave `draws`. Cada item inclui:
 - `winners_15`
 - `has_winner_15`
 
-O mapeamento de campos (API → blob) e o formato completo estão detalhados em [`docs/lotofacil-loader-azure-function-contexto.md`](docs/lotofacil-loader-azure-function-contexto.md).
+O mapeamento de campos (API → blob) e o formato completo estão detalhados em `docs/spec-driven-execution-guide.md` (Contrato V0).
 
 ## Estado no Table Storage (alto nível)
 
 O Table Storage armazena o **último concurso carregado** para o processo de atualização.
-Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um registo único de estado, incluindo `LastLoadedContestId`, `LastLoadedDrawDate` (data do último concurso carregado) e `LastUpdatedAtUtc`, com uso de **ETag** para concorrência otimista.
+Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um registo único de estado, incluindo `LastLoadedContestId` e `LastUpdatedAtUtc`, com uso de **ETag** para concorrência otimista.
 
 ## Restrições e comportamento (resumo)
 
-- **Calendário do sorteio**: sorteios **somente em dias úteis**, **às 20h**. Para evitar chamadas desnecessárias, o estado pode ser usado para encerrar execuções fora dessa janela. (A timezone de referência deve ser definida explicitamente no ambiente; este README não fixa a timezone.)
-- **Frequência do timer**: foi discutido que o CRON pode rodar **a cada hora** (exemplo citado: `0 0 * * * *`).
+- **Frequência do timer**: CRON **a cada hora** (ex.: `0 0 * * * *`).
 - **Janela de execução**: processamento com **janela interna máxima de 3 minutos**.
 - **Rate limit / resiliência**: quando houver limitação (ex.: **1 pedido/minuto**) e/ou respostas **429**, o fluxo considera **retry** (Polly) e respeito a `Retry-After` quando existir, desde que caiba na janela.
 - **Ordem de persistência**: primeiro **gravar o blob**, depois **atualizar o estado** no Table Storage.

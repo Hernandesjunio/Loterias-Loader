@@ -13,13 +13,15 @@ Validar que uma Azure Function (Timer Trigger) em C#/.NET:
 
 ## Fonte de verdade (recorte do spec)
 
-- **Fonte de verdade única**: `docs/brief.md`
-- **Referência auxiliar (histórico/apoio)**: `docs/lotofacil-loader-azure-function-contexto.md`
+- **Fontes de verdade**:
+  - `docs/adrs/0001-lotofacil-loader-azure-function.md`
+  - `docs/spec-driven-execution-guide.md` (seção **Contrato V0 — Lotofacil Loader (normativo)**)
+  - `docs/fases-execucao-templates.md`
 
 ## Escopo e não escopo (para testes)
 
 - **Em escopo**: leitura/gravação de Blob Storage, leitura/gravação de Table Storage (incluindo ETag como concorrência otimista), chamadas aos dois endpoints, regras de encerramento antecipado, cálculo de lacunas, janela de 3 minutos, retomada por reexecução do timer, ordem de persistência (blob antes do table), mapeamento JSON API → JSON do blob.
-- **Fora do escopo** (não definido no contexto): geração/rotação de SAS, CI/CD, nomes de Resource Group/SKU, e detalhes operacionais que não foram acordados (ex.: nome fixo do container do blob).
+- **Fora do escopo** (não definido no contrato V0): geração/rotação de SAS, CI/CD, nomes de Resource Group/SKU.
 
 ## Ambiente e pré-condições de execução
 
@@ -40,7 +42,7 @@ Nos testes, deve ser possível disparar a execução (manual/forçada) e também
   - **Blob Storage** (documento com `draws`, blob nomeado `Lotofacil`)
   - **Table Storage** (estado do loader; exemplo discutido: tabela `LotofacilState`, PK `Lotofacil`, RK `Loader`)
 
-### Configuração por variáveis de ambiente (nomes propostos no contexto)
+### Configuração por variáveis de ambiente (normativo na V0)
 
 Os testes devem parametrizar a execução usando as variáveis (nomes sugeridos):
 
@@ -56,7 +58,7 @@ Os testes devem parametrizar a execução usando as variáveis (nomes sugeridos)
 O brief exige evitar “defaults ocultos”:
 
 - Sorteios ocorrem **somente em dias úteis**, **às 20h**.
-- A avaliação de “dia útil” e “passou das 20h” deve ocorrer numa **timezone explicitamente definida no ambiente** (o contexto **não fixa** qual).
+- A avaliação de “dia útil” e “passou das 20h” deve ocorrer na timezone normatizada no **Contrato V0** (`America/Sao_Paulo`).
 
 Nos testes, a timezone deve ser tratada como **pré-condição do ambiente de execução** e usada para construir cenários de “antes/depois das 20h”.
 

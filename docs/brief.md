@@ -99,6 +99,9 @@ Nomes sugeridos na conversa (padrão `Section__Key`):
 
 ## Referências
 
-- [`lotofacil-loader-azure-function-contexto.md`](lotofacil-loader-azure-function-contexto.md) (referência auxiliar / histórico de decisões)
+- `docs/adrs/0001-lotofacil-loader-azure-function.md`
+- `docs/spec-driven-execution-guide.md`
+- `docs/fases-execucao-templates.md`
+- `docs/archived/lotofacil-loader-azure-function-contexto.md` (histórico inicial; não normativo)
 - [`../AGENTS.md`](../AGENTS.md)
 

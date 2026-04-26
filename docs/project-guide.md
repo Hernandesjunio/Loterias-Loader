@@ -27,7 +27,7 @@ Este repositório, no recorte atual, implementa um **loader determinístico** pa
   - Dois modos de consulta à API: “último resultado” e “por concurso”.
   - Persistência em ordem: **blob primeiro**, **estado depois**.
 
-> Nota: os detalhes completos de contrato e mapeamento estão em `docs/brief.md` e `docs/lotofacil-loader-azure-function-contexto.md`.
+> Nota: os detalhes completos de contrato e mapeamento estão na seção **Contrato V0 — Lotofacil Loader (normativo)** em `docs/spec-driven-execution-guide.md` e nas decisões em `docs/adrs/*`.
 
 ### Estrutura sugerida (C#/.NET em um único Function App)
 
@@ -46,7 +46,6 @@ tests/
   domain/              # invariantes/modelos
 docs/
   brief.md
-  lotofacil-loader-azure-function-contexto.md
   project-guide.md
   glossary.md
   adrs/
