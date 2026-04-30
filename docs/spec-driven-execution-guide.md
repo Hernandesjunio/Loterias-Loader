@@ -265,7 +265,7 @@ Após obter `latestId` pelo endpoint “último”:
 - **Retries (Polly)**: somente enquanto houver janela restante suficiente para concluir e persistir.
 - **Precedência de espera entre tentativas/chamadas** (do maior para o menor):
   1) `Retry-After` (quando presente e parseável);
-  2) pacing mínimo **1 req/min** (60s entre **inícios** de requests para a API);
+  2) pacing mínimo do plano free: **10s** entre **inícios** de requests para a API;
   3) intervalo fixo de retry quando não houver `Retry-After`: **30s**.
 - **Teto pela janela**: nenhuma espera/retry pode ultrapassar o deadline. Se ultrapassar, encerrar com parada segura.
 

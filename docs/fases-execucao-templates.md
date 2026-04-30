@@ -84,7 +84,7 @@ Checklist anti-alucinação (obrigatório fixar no contrato):
 - primeira execução (state ausente) e resolução de inconsistências table vs blob
 - invariantes do blob (ordem, dedupe, sobrescrita, serialização canônica)
 - classificação de erros (falha dura vs parada segura) e tratamento de lacunas com erro/404
-- precedência e parâmetros de rate limit / retry / pacing (Retry-After vs 1 req/min; timeouts; intervalo; limite)
+- precedência e parâmetros de rate limit / retry / pacing (Retry-After vs pacing mínimo de 10s; timeouts; intervalo; limite)
 - comportamento em conflito de concorrência (ETag/table e corrida no blob)
 - regra de checkpoint: state só avança após blob refletir o último concurso persistido
 

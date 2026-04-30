@@ -34,7 +34,7 @@ O blob será disponibilizado a aplicações externas via **SAS token** (o consum
   - o resultado vem de um serviço gratuito; foi referido que o serviço pago permite **uma conexão por minuto**;
   - em cenários com mais de um sorteio para atualizar, pode ser necessário **retry** com **Polly**;
   - foi discutido retry a cada **30 segundos**, até um máximo de **3 minutos** de tentativas dentro de uma execução;
-  - quando aplicável, respeitar **429** e `Retry-After`, e espaçar chamadas (ex.: esperar completar **60 segundos** entre chamadas) desde que ainda caiba na janela.
+  - quando aplicável, respeitar **429** e `Retry-After`, e espaçar chamadas (ex.: esperar completar **10 segundos** entre chamadas) desde que ainda caiba na janela.
 - **Sem segredos em código**: token e credenciais (Access Key / equivalente) devem vir de **variáveis de ambiente**.
 
 ## Contrato de dados (alto nível)

@@ -25,7 +25,7 @@ Termos usados no recorte atual do `Lotofacil-Loader` (Azure Function).
 | Rate limit | Restrição de cadência de chamadas imposta pela API; influencia pacing e retry. |
 | HTTP 429 / `Retry-After` | Sinalização de excesso de requisições e sugestão de espera a ser respeitada. |
 | Polly | Biblioteca .NET de resiliência (retry/timeout/backoff) para chamadas HTTP. |
-| Pacing | Espaçamento entre chamadas (ex.: 60s) quando aplicável, respeitando a janela de execução. |
+| Pacing | Espaçamento entre chamadas (ex.: 10s) quando aplicável, respeitando a janela de execução. |
 | Encerramento antecipado (pré-API) | Regras para terminar sem chamar a API (dia útil, “após 20h” em timezone explícita, sorteio do dia já carregado). |
 | Timezone explícita | Configuração do ambiente para interpretar “hoje” e “20h” sem defaults ocultos. |
 | Variáveis de ambiente (config/segredos) | Fonte de configuração e segredos (token, credenciais de storage), evitando hardcode. |

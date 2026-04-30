@@ -9,7 +9,7 @@ Validar que uma Azure Function (Timer Trigger) em C#/.NET:
 - Atualiza um **documento JSON** num blob (nome do blob: **`Lotofacil`**) contendo `draws`.
 - Mantém um **estado** no Table Storage para saber o **último concurso carregado** e evitar trabalho redundante.
 - Usa a API (`/results/last` e `/results/{id}`) para descobrir o último concurso disponível e preencher lacunas.
-- Respeita as regras de encerramento antecipado (dia útil, 20h, já carregado hoje), a janela interna de **3 minutos**, e a política de resiliência/cadência (Polly, 429/Retry-After, 1 chamada/minuto quando aplicável).
+- Respeita as regras de encerramento antecipado (dia útil, 20h, já carregado hoje), a janela interna de **3 minutos**, e a política de resiliência/cadência (Polly, 429/Retry-After, pacing mínimo de 10s quando aplicável).
 
 ## Fonte de verdade (recorte do spec)
 
@@ -225,7 +225,7 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
   - **Objetivo**: validar a regra “parar quando a janela expira; retomar na próxima execução”.
   - **Entrada (Table)**: `LastLoadedContestId = N`
   - **Entrada (API /results/last)**: `latestId = N+k` com lacuna suficientemente grande para não concluir
-  - **Condição de execução**: induzir atraso/limitação nas chamadas (ex.: cadência/espera por 60s quando aplicável, e/ou retries) de forma que exceda 3 minutos antes de processar todos os ids.
+  - **Condição de execução**: induzir atraso/limitação nas chamadas (ex.: cadência/espera por 10s quando aplicável, e/ou retries) de forma que exceda 3 minutos antes de processar todos os ids.
   - **Execução**: disparar uma execução, depois disparar uma execução subsequente.
   - **Saída esperada**:
     - 1ª execução: processa um prefixo dos ids, atualiza blob e table para o último id efetivamente processado, e interrompe ao expirar a janela
@@ -251,7 +251,7 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
   - **Condição**: cenário em que a regra “1 pedido por minuto” deve ser respeitada (conforme discussão do fornecedor).
   - **Execução**: disparar a execução com múltiplos ids a carregar.
   - **Saída esperada**:
-    - Entre chamadas, há espera até completar ~60s desde a última chamada (`lastApiCallUtc` como conceito discutido)
+    - Entre chamadas, há espera até completar ~10s desde a última chamada (`lastApiCallUtc` como conceito discutido)
     - Se a espera impedir concluir todos os ids em 3 minutos, aplica-se a retomada (D1)
 
 ### F. Concorrência e consistência (Table ETag + ordem blob→table)

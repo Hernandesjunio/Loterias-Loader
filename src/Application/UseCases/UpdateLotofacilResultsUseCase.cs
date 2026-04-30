@@ -125,10 +125,10 @@ public sealed class UpdateLotofacilResultsUseCase
                 break;
             }
 
-            // Pacing 1 req/min (60s entre inícios).
+            // Pacing mínimo do plano free: 10s entre inícios.
             if (lastRequestStartUtc is not null)
             {
-                var earliest = lastRequestStartUtc.Value.AddSeconds(60);
+                var earliest = lastRequestStartUtc.Value.AddSeconds(10);
                 var wait = earliest - _clock.UtcNow;
                 if (wait > TimeSpan.Zero)
                 {

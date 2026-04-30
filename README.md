@@ -37,7 +37,7 @@ O mapeamento de campos (API → blob) e o formato completo estão detalhados em 
 
 ## Carga inicial do blob (bulk / layout CEF)
 
-Se você iniciar “do zero” e depender apenas da API (com pacing de 1 req/min), a carga completa pode levar dias.
+Se você iniciar “do zero” e depender apenas da API (com pacing mínimo de 10s), a carga completa pode levar muito tempo.
 Para evitar isso, use uma fonte **bulk** (layout histórico da CEF em CSV) e converta para o **JSON canônico** do blob.
 
 ### Gerar o JSON canônico a partir do CSV da CEF
@@ -82,7 +82,7 @@ Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um regi
 
 - **Frequência do timer**: **configurável por ambiente** via `LotofacilLoader__TimerSchedule` (ex.: `0 0 * * * *`).
 - **Janela de execução**: processamento com **janela interna máxima de 3 minutos**.
-- **Rate limit / resiliência**: quando houver limitação (ex.: **1 pedido/minuto**) e/ou respostas **429**, o fluxo considera **retry** (Polly) e respeito a `Retry-After` quando existir, desde que caiba na janela.
+- **Rate limit / resiliência**: quando houver limitação (ex.: **pacing mínimo de 10s**) e/ou respostas **429**, o fluxo considera **retry** (Polly) e respeito a `Retry-After` quando existir, desde que caiba na janela.
 - **Ordem de persistência**: primeiro **gravar o blob**, depois **atualizar o estado** no Table Storage.
 
 ## Configuração (variáveis de ambiente)

@@ -57,9 +57,9 @@ Este checklist aponta **onde** o contrato fixa as decisões e **onde** isso apar
     - `src/Infrastructure/Options/LotodicasOptions.cs` (`Lotodicas__BaseUrl`, `Lotodicas__Token` via binding)
     - `src/Infrastructure/Options/StorageOptions.cs` (`Storage__ConnectionString`, `Storage__BlobContainer`, `Storage__LotofacilBlobName`, `Storage__LotofacilStateTable`)
 - **Rate limit / retry explícitos (sem inferência)**:
-  - **Contrato**: `docs/spec-driven-execution-guide.md` → seção 12 (precedência `Retry-After` > 1 req/min > 30s)
+  - **Contrato**: `docs/spec-driven-execution-guide.md` → seção 12 (precedência `Retry-After` > pacing 10s > 30s)
   - **Código**:
-    - pacing **1 req/min** (60s entre inícios): `src/Application/UseCases/UpdateLotofacilResultsUseCase.cs`
+    - pacing mínimo do plano free (**10s** entre inícios): `src/Application/UseCases/UpdateLotofacilResultsUseCase.cs`
     - retry/timeout por tentativa + `Retry-After` (quando 429): `src/Infrastructure/Http/LotodicasApiClient.cs`
 - **Janela/timeout explícitos**:
   - **Contrato**: `docs/spec-driven-execution-guide.md` → seção 5 (janela 180s; orçamento mínimo 15s; timeout 10s)

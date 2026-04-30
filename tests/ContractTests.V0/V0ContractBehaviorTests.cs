@@ -109,10 +109,10 @@ public sealed class V0ContractBehaviorTests
         var t0 = Utc("2026-04-27T23:00:00Z");
         var clock = new FakeClock(t0);
         var delay = new FakeDelay(clock);
-        var api = new FakeApi(latestId: 10);
-        for (var id = 1; id <= 10; id++)
+        var api = new FakeApi(latestId: 25);
+        for (var id = 1; id <= 25; id++)
         {
-            var date = id == 10 ? "2026-04-27" : $"2026-04-{id:00}";
+            var date = id == 25 ? "2026-04-27" : $"2026-04-{(id % 28) + 1:00}";
             api.WithContest(id, ContestJson(id, date, winners15: 0));
         }
 
@@ -120,24 +120,22 @@ public sealed class V0ContractBehaviorTests
         var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
         var state = new InMemoryStateStore(seq, existing: new LotofacilState(0, null, clock.UtcNow, null));
 
-        // Execução 1: com pacing 60s e janela 180s, deve materializar somente 1..3 (não cabe esperar para iniciar 4).
+        // Execução 1: com pacing 10s e janela 180s (e orçamento mínimo de 15s), deve materializar somente 1..18 (não cabe iniciar 19).
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
         Assert.NotNull(state.Current);
-        Assert.Equal(3, state.Current!.LastLoadedContestId);
+        Assert.Equal(18, state.Current!.LastLoadedContestId);
         Assert.Contains(blob.Current.Draws, d => d.ContestId == 1);
-        Assert.Contains(blob.Current.Draws, d => d.ContestId == 2);
-        Assert.Contains(blob.Current.Draws, d => d.ContestId == 3);
-        Assert.DoesNotContain(blob.Current.Draws, d => d.ContestId == 4);
+        Assert.Contains(blob.Current.Draws, d => d.ContestId == 18);
+        Assert.DoesNotContain(blob.Current.Draws, d => d.ContestId == 19);
 
         // Execução 2: avança o relógio para o próximo "tick" (ainda após 20h no dia útil) e deve retomar em 4.
         clock.SetUtcNow(t0.AddHours(1));
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
         Assert.NotNull(state.Current);
-        Assert.Equal(6, state.Current!.LastLoadedContestId);
-        Assert.Contains(blob.Current.Draws, d => d.ContestId == 6);
-        Assert.DoesNotContain(blob.Current.Draws, d => d.ContestId == 7);
+        Assert.Equal(25, state.Current!.LastLoadedContestId);
+        Assert.Contains(blob.Current.Draws, d => d.ContestId == 25);
     }
 
     [Fact]
