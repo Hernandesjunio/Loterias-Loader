@@ -1,6 +1,7 @@
 namespace Lotofacil.Loader.Application;
 
-public sealed record UpdateLotofacilResultsOutcome(
+public sealed record UpdateLoteriaResultsOutcome(
+    string ModalityKey,
     ReasonStop ReasonStop,
     int LastLoadedContestId,
     int? LatestId,
@@ -9,4 +10,3 @@ public sealed record UpdateLotofacilResultsOutcome(
     int DeadlineSeconds,
     string Timezone
 );
-

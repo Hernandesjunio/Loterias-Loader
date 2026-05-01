@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.Hosting;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace IntegrationTests.FunctionApp.V0;
@@ -13,34 +14,31 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
 {
     private readonly string _token;
     private readonly ConcurrentQueue<RecordedCall> _calls = new();
-    private readonly Dictionary<int, string> _byId = new();
-    private string? _lastJson;
-    private IHost? _host;
+    private readonly Dictionary<(string Modality, int Id), string> _byId = new();
+    private readonly Dictionary<string, string> _lastJsonByModality = new();
+    private WebApplication? _app;
 
-    public LotodicasFakeServer(string token)
-    {
-        _token = token;
-    }
+    public LotodicasFakeServer(string token) => _token = token;
 
     public Uri BaseUrl { get; private set; } = new Uri("http://127.0.0.1:0");
 
     public IReadOnlyList<RecordedCall> Calls => _calls.ToArray();
 
-    public LotodicasFakeServer WithLatestResponseJson(string json)
+    public LotodicasFakeServer WithLatestResponseJson(string modality, string json)
     {
-        _lastJson = json;
+        _lastJsonByModality[modality] = json;
         return this;
     }
 
-    public LotodicasFakeServer WithContestResponseJson(int id, string json)
+    public LotodicasFakeServer WithContestResponseJson(string modality, int id, string json)
     {
-        _byId[id] = json;
+        _byId[(modality, id)] = json;
         return this;
     }
 
     public async Task StartAsync(CancellationToken ct)
     {
-        if (_host is not null)
+        if (_app is not null)
         {
             return;
         }
@@ -50,22 +48,21 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
 
         var app = builder.Build();
 
-        app.MapGet("/api/v2/lotofacil/results/last", async context =>
+        app.MapGet("/api/v2/{modality}/results/last", async (HttpContext context, string modality) =>
         {
-            await HandleAsync(context, endpoint: "last", contestId: null);
+            await HandleAsync(context, modality, endpoint: "last", contestId: null);
         });
 
-        app.MapGet("/api/v2/lotofacil/results/{id:int}", async context =>
+        app.MapGet("/api/v2/{modality}/results/{id:int}", async (HttpContext context, string modality, int id) =>
         {
-            var id = int.Parse(context.Request.RouteValues["id"]!.ToString()!);
-            await HandleAsync(context, endpoint: "by_id", contestId: id);
+            await HandleAsync(context, modality, endpoint: "by_id", contestId: id);
         });
 
-        _host = app;
+        _app = app;
         await app.StartAsync(ct);
 
-        var addrs = app.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
-            .Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()
+        var addrs = app.Services.GetRequiredService<IServer>()
+            .Features.Get<IServerAddressesFeature>()
             ?.Addresses;
 
         var first = addrs?.FirstOrDefault();
@@ -77,7 +74,7 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         BaseUrl = new Uri(first.TrimEnd('/') + "/");
     }
 
-    private async Task HandleAsync(HttpContext ctx, string endpoint, int? contestId)
+    private async Task HandleAsync(HttpContext ctx, string modality, string endpoint, int? contestId)
     {
         var token = ctx.Request.Query["token"].ToString();
         _calls.Enqueue(new RecordedCall(
@@ -86,7 +83,8 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
             QueryString: ctx.Request.QueryString.Value ?? "",
             Endpoint: endpoint,
             ContestId: contestId,
-            Token: token
+            Token: token,
+            Modality: modality
         ));
 
         if (!string.Equals(token, _token, StringComparison.Ordinal))
@@ -98,8 +96,8 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
 
         string? payload = endpoint switch
         {
-            "last" => _lastJson,
-            "by_id" when contestId is not null && _byId.TryGetValue(contestId.Value, out var j) => j,
+            "last" => _lastJsonByModality.GetValueOrDefault(modality),
+            "by_id" when contestId is not null && _byId.TryGetValue((modality, contestId.Value), out var j) => j,
             _ => null
         };
 
@@ -117,19 +115,19 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_host is null)
+        if (_app is null)
         {
             return;
         }
 
         try
         {
-            await _host.StopAsync();
+            await _app.StopAsync();
         }
         finally
         {
-            _host.Dispose();
-            _host = null;
+            await _app.DisposeAsync();
+            _app = null;
         }
     }
 
@@ -139,7 +137,7 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         string QueryString,
         string Endpoint,
         int? ContestId,
-        string Token
+        string Token,
+        string Modality
     );
 }
-

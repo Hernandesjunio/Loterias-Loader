@@ -7,6 +7,7 @@ public sealed class StorageOptions
     public required string ConnectionString { get; init; }
     public required string BlobContainer { get; init; }
     public required string LotofacilBlobName { get; init; }
-    public required string LotofacilStateTable { get; init; }
+    public required string MegasenaBlobName { get; init; }
+    public required string LoteriasStateTable { get; init; }
 }
 

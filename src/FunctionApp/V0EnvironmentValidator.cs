@@ -6,6 +6,8 @@ namespace Lotofacil.Loader.FunctionApp;
 public sealed class V0EnvironmentValidator
 {
     private static readonly Regex BlobContainerRegex = new("^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$", RegexOptions.Compiled);
+    private static readonly Regex BlobNameRegex = new("^[A-Za-z0-9._-]{1,255}$", RegexOptions.Compiled);
+    private static readonly Regex TableNameRegex = new("^[A-Za-z][A-Za-z0-9]{2,62}$", RegexOptions.Compiled);
 
     private readonly IConfiguration _cfg;
 
@@ -13,17 +15,18 @@ public sealed class V0EnvironmentValidator
 
     public ValidationResult Validate()
     {
-        // Contrato V0 — docs/spec-driven-execution-guide.md (seção 2).
         var baseUrl = (_cfg["Lotodicas:BaseUrl"] ?? _cfg["Lotodicas__BaseUrl"])?.Trim();
         var token = (_cfg["Lotodicas:Token"] ?? _cfg["Lotodicas__Token"])?.Trim();
 
-        // Adendo V0.1 — schedule configurável por ambiente.
-        var timerSchedule = (_cfg["LotofacilLoader:TimerSchedule"] ?? _cfg["LotofacilLoader__TimerSchedule"])?.Trim();
+        var timerSchedule =
+            (_cfg["LoteriasLoader:TimerSchedule"] ?? _cfg["LoteriasLoader__TimerSchedule"]
+                ?? _cfg["LotofacilLoader:TimerSchedule"] ?? _cfg["LotofacilLoader__TimerSchedule"])?.Trim();
 
         var conn = (_cfg["Storage:ConnectionString"] ?? _cfg["Storage__ConnectionString"])?.Trim();
         var container = (_cfg["Storage:BlobContainer"] ?? _cfg["Storage__BlobContainer"])?.Trim();
-        var blobName = (_cfg["Storage:LotofacilBlobName"] ?? _cfg["Storage__LotofacilBlobName"])?.Trim();
-        var tableName = (_cfg["Storage:LotofacilStateTable"] ?? _cfg["Storage__LotofacilStateTable"])?.Trim();
+        var lotofacilBlob = (_cfg["Storage:LotofacilBlobName"] ?? _cfg["Storage__LotofacilBlobName"])?.Trim();
+        var megasenaBlob = (_cfg["Storage:MegasenaBlobName"] ?? _cfg["Storage__MegasenaBlobName"])?.Trim();
+        var tableName = (_cfg["Storage:LoteriasStateTable"] ?? _cfg["Storage__LoteriasStateTable"])?.Trim();
 
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
@@ -48,7 +51,7 @@ public sealed class V0EnvironmentValidator
 
         if (string.IsNullOrWhiteSpace(timerSchedule))
         {
-            return ValidationResult.Invalid("LotofacilLoader__TimerSchedule é obrigatório");
+            return ValidationResult.Invalid("LoteriasLoader__TimerSchedule é obrigatório (ou use LotofacilLoader__TimerSchedule como compatibilidade)");
         }
 
         if (string.IsNullOrWhiteSpace(conn))
@@ -66,14 +69,24 @@ public sealed class V0EnvironmentValidator
             return ValidationResult.Invalid("Storage__BlobContainer deve ser um nome válido de container do Blob Storage");
         }
 
-        if (!string.Equals(blobName, "Lotofacil", StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(lotofacilBlob) || !BlobNameRegex.IsMatch(lotofacilBlob))
         {
-            return ValidationResult.Invalid("Storage__LotofacilBlobName deve ser 'Lotofacil' (V0 normativo)");
+            return ValidationResult.Invalid("Storage__LotofacilBlobName é obrigatório e deve ser um nome de blob válido (1–255, letras, números, '.', '_' ou '-')");
         }
 
-        if (!string.Equals(tableName, "LotofacilState", StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(megasenaBlob) || !BlobNameRegex.IsMatch(megasenaBlob))
         {
-            return ValidationResult.Invalid("Storage__LotofacilStateTable deve ser 'LotofacilState' (V0 normativo)");
+            return ValidationResult.Invalid("Storage__MegasenaBlobName é obrigatório e deve ser um nome de blob válido (1–255, letras, números, '.', '_' ou '-')");
+        }
+
+        if (string.IsNullOrWhiteSpace(tableName) || !TableNameRegex.IsMatch(tableName))
+        {
+            return ValidationResult.Invalid("Storage__LoteriasStateTable é obrigatório e deve ser um nome válido de tabela");
+        }
+
+        if (!string.Equals(tableName, "LoteriasState", StringComparison.Ordinal))
+        {
+            return ValidationResult.Invalid("Storage__LoteriasStateTable deve ser 'LoteriasState'");
         }
 
         return ValidationResult.Valid();
@@ -85,4 +98,3 @@ public sealed class V0EnvironmentValidator
         public static ValidationResult Invalid(string error) => new(false, error);
     }
 }
-

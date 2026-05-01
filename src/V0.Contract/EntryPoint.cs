@@ -6,24 +6,17 @@ namespace Lotofacil.Loader.V0.Contract;
 
 public static class EntryPoint
 {
-    /// <summary>
-    /// Ponto de acoplamento mínimo para testes de contrato (sem Azure).
-    /// A implementação completa da V0 será materializada por fatias.
-    /// </summary>
     public static IServiceProvider BuildServiceProvider()
     {
         var services = new ServiceCollection();
         services.AddLotofacilLoaderV0Core();
-
-        // Sem adaptadores reais ainda: as portas precisam ser fornecidas por tests/fakes
-        // ou pela infra quando existir. Aqui intencionalmente não registramos nada.
         return services.BuildServiceProvider(validateScopes: true);
     }
 
     public static Task RunAsync(
-        ILotofacilApiClient api,
-        ILotofacilBlobStore blob,
-        ILotofacilStateStore state,
+        ILotteriesApiClient api,
+        ILoteriaBlobStore blob,
+        ILoteriaStateStore state,
         CancellationToken ct)
     {
         var services = new ServiceCollection();
@@ -31,16 +24,26 @@ public static class EntryPoint
         services.AddSingleton(api);
         services.AddSingleton(blob);
         services.AddSingleton(state);
+        services.AddSingleton<LotofacilBlobCatalog>();
+        services.AddSingleton(sp => new LoteriaResultsUpdateUseCase(
+            sp.GetRequiredService<IClock>(),
+            sp.GetRequiredService<IDelay>(),
+            sp.GetRequiredService<ILotteriesApiClient>(),
+            sp.GetRequiredService<ILoteriaBlobStore>(),
+            sp.GetRequiredService<ILoteriaStateStore>(),
+            sp.GetRequiredService<LotofacilBlobCatalog>(),
+            modalityKey: LoteriaModalityKeys.Lotofacil,
+            lotteryApiSegment: LoteriaModalityKeys.Lotofacil));
 
         using var sp = services.BuildServiceProvider(validateScopes: true);
-        var uc = sp.GetRequiredService<UpdateLotofacilResultsUseCase>();
+        var uc = sp.GetRequiredService<LoteriaResultsUpdateUseCase>();
         return RunAsyncInternal(uc, ct);
     }
 
     public static Task RunAsync(
-        ILotofacilApiClient api,
-        ILotofacilBlobStore blob,
-        ILotofacilStateStore state,
+        ILotteriesApiClient api,
+        ILoteriaBlobStore blob,
+        ILoteriaStateStore state,
         IClock clock,
         IDelay delay,
         CancellationToken ct)
@@ -52,15 +55,24 @@ public static class EntryPoint
         services.AddSingleton(state);
         services.AddSingleton(clock);
         services.AddSingleton(delay);
+        services.AddSingleton<LotofacilBlobCatalog>();
+        services.AddSingleton(sp => new LoteriaResultsUpdateUseCase(
+            sp.GetRequiredService<IClock>(),
+            sp.GetRequiredService<IDelay>(),
+            sp.GetRequiredService<ILotteriesApiClient>(),
+            sp.GetRequiredService<ILoteriaBlobStore>(),
+            sp.GetRequiredService<ILoteriaStateStore>(),
+            sp.GetRequiredService<LotofacilBlobCatalog>(),
+            modalityKey: LoteriaModalityKeys.Lotofacil,
+            lotteryApiSegment: LoteriaModalityKeys.Lotofacil));
 
         using var sp = services.BuildServiceProvider(validateScopes: true);
-        var uc = sp.GetRequiredService<UpdateLotofacilResultsUseCase>();
+        var uc = sp.GetRequiredService<LoteriaResultsUpdateUseCase>();
         return RunAsyncInternal(uc, ct);
     }
 
-    private static async Task RunAsyncInternal(UpdateLotofacilResultsUseCase uc, CancellationToken ct)
+    private static async Task RunAsyncInternal(LoteriaResultsUpdateUseCase uc, CancellationToken ct)
     {
         _ = await uc.ExecuteAsync(ct);
     }
 }
-

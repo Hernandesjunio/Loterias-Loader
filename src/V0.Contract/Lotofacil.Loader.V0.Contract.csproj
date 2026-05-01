@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\Application\Lotofacil.Loader.Application.csproj" />
     <ProjectReference Include="..\Composition\Lotofacil.Loader.Composition.csproj" />
   </ItemGroup>
 

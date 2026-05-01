@@ -16,9 +16,8 @@ namespace IntegrationTests.FunctionApp.V0;
 public sealed class LotofacilFunctionIntegrationTests
 {
     [SkippableFact]
-    public async Task Full_flow_trigger_to_usecase_to_persistences_uses_fake_lotodicas_and_writes_blob_then_table()
+    public async Task Full_flow_trigger_runs_lotofacil_and_mega_sena_against_fake_lotodicas_and_persists_blobs_and_table_rows()
     {
-        // Determinismo: inputs explícitos + fake HTTP com fixtures fixas.
         const string token = "test-token";
 
         var storageConn = Environment.GetEnvironmentVariable("LOT0_AZURITE_CONNECTION_STRING")
@@ -28,36 +27,47 @@ public sealed class LotofacilFunctionIntegrationTests
         var reachable = await AzuriteProbe.IsStorageReachableAsync(storageConn, CancellationToken.None);
         Skip.IfNot(reachable, "Azurite não está acessível. Inicie o Azurite local e/ou defina AZURITE_CONNECTION_STRING.");
 
-        var containerName = $"lotofacil-it-{Guid.NewGuid():n}";
-        const string blobName = "Lotofacil";
-        const string tableName = "LotofacilState";
+        var containerName = $"loterias-it-{Guid.NewGuid():n}";
+        const string lotofacilBlobName = "Lotofacil";
+        const string megaBlobName = "MegaSena";
+        const string tableName = "LoteriasState";
 
         await using var fake = new LotodicasFakeServer(token)
-            .WithLatestResponseJson(LatestJson(latestId: 7))
-            .WithContestResponseJson(6, ContestJson(id: 6, date: "2026-04-27", winners15: 0))
-            .WithContestResponseJson(7, ContestJson(id: 7, date: "2026-04-27", winners15: 5));
+            .WithLatestResponseJson(LoteriaModalityKeys.Lotofacil, LatestJson(latestId: 7))
+            .WithLatestResponseJson(LoteriaModalityKeys.MegaSena, LatestJson(latestId: 7))
+            .WithContestResponseJson(LoteriaModalityKeys.Lotofacil, 6, ContestJsonLotofacil(id: 6, date: "2026-04-27", winners15: 0))
+            .WithContestResponseJson(LoteriaModalityKeys.Lotofacil, 7, ContestJsonLotofacil(id: 7, date: "2026-04-27", winners15: 5))
+            .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 6, ContestJsonMegaSena(id: 6, date: "2026-04-27", winners6: 0))
+            .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 7, ContestJsonMegaSena(id: 7, date: "2026-04-27", winners6: 2));
 
         await fake.StartAsync(CancellationToken.None);
 
-        // Seed (pré-condição): Table state inicial => LastLoadedContestId = 5.
         var table = new TableClient(storageConn, tableName);
         await table.CreateIfNotExistsAsync();
-        await table.UpsertEntityAsync(new TableEntity("Lotofacil", "Loader")
+
+        await table.UpsertEntityAsync(new TableEntity(LoteriaModalityKeys.Lotofacil, "Loader")
         {
             ["LastLoadedContestId"] = 5,
             ["LastLoadedDrawDate"] = "2026-04-01",
             ["LastUpdatedAtUtc"] = DateTimeOffset.Parse("2026-04-01T00:00:00Z")
         });
 
-        // Seed opcional: blob inicial vazio (para garantir que o fluxo escreve um documento canônico).
+        await table.UpsertEntityAsync(new TableEntity(LoteriaModalityKeys.MegaSena, "Loader")
+        {
+            ["LastLoadedContestId"] = 5,
+            ["LastLoadedDrawDate"] = "2026-04-01",
+            ["LastUpdatedAtUtc"] = DateTimeOffset.Parse("2026-04-01T00:00:00Z")
+        });
+
         var blobContainer = new BlobContainerClient(storageConn, containerName);
         await blobContainer.CreateIfNotExistsAsync();
-        var blob = blobContainer.GetBlobClient(blobName);
-        await blob.UploadAsync(BinaryData.FromString("{\"draws\":[]}"), overwrite: true);
 
-        // DI: infra real, mas com stores "recording" para provar ordem blob→table.
-        // Observação: o validator V0 exige HTTPS, mas a integração controlada usa Fake HTTP local.
-        // Para manter o trigger completo, usamos um config "dummy" (HTTPS válido) apenas para o validator.
+        var lotofacilBlob = blobContainer.GetBlobClient(lotofacilBlobName);
+        await lotofacilBlob.UploadAsync(BinaryData.FromString("{\"draws\":[]}"), overwrite: true);
+
+        var megaBlob = blobContainer.GetBlobClient(megaBlobName);
+        await megaBlob.UploadAsync(BinaryData.FromString("{\"draws\":[]}"), overwrite: true);
+
         var infraCfg = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -65,8 +75,9 @@ public sealed class LotofacilFunctionIntegrationTests
                 ["Lotodicas:Token"] = token,
                 ["Storage:ConnectionString"] = storageConn,
                 ["Storage:BlobContainer"] = containerName,
-                ["Storage:LotofacilBlobName"] = blobName,
-                ["Storage:LotofacilStateTable"] = tableName
+                ["Storage:LotofacilBlobName"] = lotofacilBlobName,
+                ["Storage:MegasenaBlobName"] = megaBlobName,
+                ["Storage:LoteriasStateTable"] = tableName
             })
             .Build();
 
@@ -77,8 +88,10 @@ public sealed class LotofacilFunctionIntegrationTests
                 ["Lotodicas:Token"] = token,
                 ["Storage:ConnectionString"] = storageConn,
                 ["Storage:BlobContainer"] = containerName,
-                ["Storage:LotofacilBlobName"] = blobName,
-                ["Storage:LotofacilStateTable"] = tableName
+                ["Storage:LotofacilBlobName"] = lotofacilBlobName,
+                ["Storage:MegasenaBlobName"] = megaBlobName,
+                ["Storage:LoteriasStateTable"] = tableName,
+                ["LoteriasLoader:TimerSchedule"] = "0 * * * * *"
             })
             .Build();
 
@@ -86,49 +99,14 @@ public sealed class LotofacilFunctionIntegrationTests
         services.AddLogging();
         services.AddLotofacilLoaderV0Core();
         services.AddLotofacilLoaderV0Infrastructure(infraCfg);
-
-        // Validator roda no trigger (com config HTTPS dummy, para não bloquear o fluxo em testes).
         services.AddSingleton(new V0EnvironmentValidator(validatorCfg));
-        services.AddSingleton<LotofacilLoaderTimerFunction>();
-
-        var seq = new RecordingSequence();
-        services.AddSingleton(seq);
-
-        // Decorators: preservam persistência real + provam ordem.
-        services.AddSingleton<RecordingBlobStore>(sp =>
-        {
-            var inner = new AzureBlobLotofacilBlobStore(Microsoft.Extensions.Options.Options.Create(new StorageOptions
-            {
-                ConnectionString = storageConn,
-                BlobContainer = containerName,
-                LotofacilBlobName = blobName,
-                LotofacilStateTable = tableName
-            }));
-            return new RecordingBlobStore(inner, seq);
-        });
-        services.AddSingleton<RecordingStateStore>(sp =>
-        {
-            var inner = new AzureTableLotofacilStateStore(Microsoft.Extensions.Options.Options.Create(new StorageOptions
-            {
-                ConnectionString = storageConn,
-                BlobContainer = containerName,
-                LotofacilBlobName = blobName,
-                LotofacilStateTable = tableName
-            }));
-            return new RecordingStateStore(inner, seq);
-        });
-
-        // Rewire ports para usar os recording stores.
-        services.AddSingleton<ILotofacilBlobStore>(sp => sp.GetRequiredService<RecordingBlobStore>());
-        services.AddSingleton<ILotofacilStateStore>(sp => sp.GetRequiredService<RecordingStateStore>());
+        services.AddSingleton<LoteriaLoaderTimerFunction>();
 
         await using var sp = services.BuildServiceProvider(validateScopes: true);
 
-        // Execute: trigger -> use case -> persistências.
-        var fn = sp.GetRequiredService<LotofacilLoaderTimerFunction>();
+        var fn = sp.GetRequiredService<LoteriaLoaderTimerFunction>();
         await fn.RunAsync(timer: null!, ct: CancellationToken.None);
 
-        // Asserts: chamadas esperadas ao fake do Lotodicas (endpoints + parâmetros).
         var calls = fake.Calls;
         Assert.Collection(
             calls,
@@ -150,37 +128,48 @@ public sealed class LotofacilFunctionIntegrationTests
                 Assert.Equal("GET", c.Method);
                 Assert.Equal("/api/v2/lotofacil/results/7", c.Path);
                 Assert.Equal(token, c.Token);
+            },
+            c =>
+            {
+                Assert.Equal("GET", c.Method);
+                Assert.Equal("/api/v2/mega_sena/results/last", c.Path);
+                Assert.Equal(token, c.Token);
+            },
+            c =>
+            {
+                Assert.Equal("GET", c.Method);
+                Assert.Equal("/api/v2/mega_sena/results/6", c.Path);
+                Assert.Equal(token, c.Token);
+            },
+            c =>
+            {
+                Assert.Equal("GET", c.Method);
+                Assert.Equal("/api/v2/mega_sena/results/7", c.Path);
+                Assert.Equal(token, c.Token);
             }
         );
 
-        // Asserts: blob final (comparação canônica).
-        var dl = await blob.DownloadContentAsync();
-        var gotJson = dl.Value.Content.ToString();
+        var lfJson = (await lotofacilBlob.DownloadContentAsync()).Value.Content.ToString();
+        var expectedLf = JsonNode.Parse(ExpectedLotofacilBlobJsonFor6And7())!;
+        Assert.True(JsonNode.DeepEquals(expectedLf, JsonNode.Parse(lfJson)!), lfJson);
 
-        var expected = JsonNode.Parse(ExpectedBlobJsonFor6And7())!;
-        var got = JsonNode.Parse(gotJson)!;
-        Assert.True(JsonNode.DeepEquals(expected, got), $"Blob final não bate com golden canônico.\nGot: {gotJson}");
+        var msJson = (await megaBlob.DownloadContentAsync()).Value.Content.ToString();
+        var expectedMs = JsonNode.Parse(ExpectedMegaSenaBlobJsonFor6And7())!;
+        Assert.True(JsonNode.DeepEquals(expectedMs, JsonNode.Parse(msJson)!), msJson);
 
-        // Asserts: state final no Table (checkpoint consistente).
-        var persisted = await table.GetEntityAsync<TableEntity>("Lotofacil", "Loader");
-        Assert.Equal(7, persisted.Value.GetInt32("LastLoadedContestId"));
-        Assert.Equal("2026-04-27", persisted.Value.GetString("LastLoadedDrawDate"));
+        var lfState = await table.GetEntityAsync<TableEntity>(LoteriaModalityKeys.Lotofacil, "Loader");
+        Assert.Equal(7, lfState.Value.GetInt32("LastLoadedContestId"));
+        Assert.Equal("2026-04-27", lfState.Value.GetString("LastLoadedDrawDate"));
 
-        // Asserts: ordem blob→table (prova via recording wrappers).
-        var recBlob = sp.GetRequiredService<RecordingBlobStore>();
-        var recState = sp.GetRequiredService<RecordingStateStore>();
-        Assert.True(recBlob.SequenceIdOfLastWrite > 0);
-        Assert.True(recState.SequenceIdOfLastWrite > 0);
-        Assert.True(
-            recBlob.SequenceIdOfLastWrite < recState.SequenceIdOfLastWrite,
-            "Contrato V0: persistir blob antes do Table state."
-        );
+        var msState = await table.GetEntityAsync<TableEntity>(LoteriaModalityKeys.MegaSena, "Loader");
+        Assert.Equal(7, msState.Value.GetInt32("LastLoadedContestId"));
+        Assert.Equal("2026-04-27", msState.Value.GetString("LastLoadedDrawDate"));
     }
 
     private static string LatestJson(int latestId) =>
         JsonSerializer.Serialize(new { data = new { draw_number = latestId } });
 
-    private static string ContestJson(int id, string date, int winners15)
+    private static string ContestJsonLotofacil(int id, string date, int winners15)
     {
         var obj = new
         {
@@ -195,7 +184,22 @@ public sealed class LotofacilFunctionIntegrationTests
         return JsonSerializer.Serialize(obj);
     }
 
-    private static string ExpectedBlobJsonFor6And7() =>
+    private static string ContestJsonMegaSena(int id, string date, int winners6)
+    {
+        var obj = new
+        {
+            data = new
+            {
+                draw_number = id,
+                draw_date = date,
+                drawing = new { draw = new[] { 1, 2, 3, 4, 5, 6 } },
+                prizes = new[] { new { name = "6 acertos", winners = winners6 } }
+            }
+        };
+        return JsonSerializer.Serialize(obj);
+    }
+
+    private static string ExpectedLotofacilBlobJsonFor6And7() =>
         """
         {
           "draws": [
@@ -217,5 +221,25 @@ public sealed class LotofacilFunctionIntegrationTests
         }
         """;
 
+    private static string ExpectedMegaSenaBlobJsonFor6And7() =>
+        """
+        {
+          "draws": [
+            {
+              "contest_id": 6,
+              "draw_date": "2026-04-27",
+              "numbers": [1,2,3,4,5,6],
+              "winners_6": 0,
+              "has_winner_6": false
+            },
+            {
+              "contest_id": 7,
+              "draw_date": "2026-04-27",
+              "numbers": [1,2,3,4,5,6],
+              "winners_6": 2,
+              "has_winner_6": true
+            }
+          ]
+        }
+        """;
 }
-

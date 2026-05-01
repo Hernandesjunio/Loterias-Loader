@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace Lotofacil.Loader.Infrastructure;
 
-public sealed class LotodicasApiClient : ILotofacilApiClient
+public sealed class LotodicasApiClient : ILotteriesApiClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -22,32 +22,31 @@ public sealed class LotodicasApiClient : ILotofacilApiClient
         _options = options.Value;
     }
 
-    public async Task<int> GetLatestContestIdAsync(CancellationToken ct)
+    public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct) =>
+        GetLatestContestIdCoreAsync(lotteryApiSegment, ct);
+
+    public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
+        GetContestByIdCoreAsync(lotteryApiSegment, contestId, ct);
+
+    private async Task<int> GetLatestContestIdCoreAsync(string lotteryApiSegment, CancellationToken ct)
     {
         using var doc = await SendJsonWithResilienceAsync(
-            relativePath: $"/api/v2/lotofacil/results/last?token={Uri.EscapeDataString(_options.Token)}",
+            relativePath: $"/api/v2/{lotteryApiSegment}/results/last?token={Uri.EscapeDataString(_options.Token)}",
             ct
         );
 
         return doc.RootElement.GetProperty("data").GetProperty("draw_number").GetInt32();
     }
 
-    public async Task<object> GetContestByIdRawAsync(int contestId, CancellationToken ct)
-    {
-        // Retorna JsonDocument (caller pode extrair/parsear).
-        return await SendJsonWithResilienceAsync(
-            relativePath: $"/api/v2/lotofacil/results/{contestId}?token={Uri.EscapeDataString(_options.Token)}",
+    private async Task<object> GetContestByIdCoreAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
+        await SendJsonWithResilienceAsync(
+            relativePath: $"/api/v2/{lotteryApiSegment}/results/{contestId}?token={Uri.EscapeDataString(_options.Token)}",
             ct
         );
-    }
 
     private async Task<JsonDocument> SendJsonWithResilienceAsync(string relativePath, CancellationToken ct)
     {
-        // Contrato V0 (docs/spec-driven-execution-guide.md):
-        // - timeout por tentativa = 10s
-        // - 429 respeita Retry-After
-        // - falhas transitórias: retry com espera fixa 30s quando não houver Retry-After
-        const int maxAttempts = 2; // 1 tentativa + 1 retry (limite baixo para não estourar janela sem saber o deadline)
+        const int maxAttempts = 2;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -72,7 +71,6 @@ public sealed class LotodicasApiClient : ILotofacilApiClient
                     continue;
                 }
 
-                // 4xx (exceto 429) e outros: falha dura para o caso de uso decidir (ele para com segurança).
                 resp.EnsureSuccessStatusCode();
 
                 var stream = await resp.Content.ReadAsStreamAsync(ct);
@@ -80,7 +78,6 @@ public sealed class LotodicasApiClient : ILotofacilApiClient
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && attempt < maxAttempts)
             {
-                // Timeout por tentativa (10s) - retry.
                 await Task.Delay(TimeSpan.FromSeconds(30), ct);
                 continue;
             }
@@ -109,7 +106,6 @@ public sealed class LotodicasApiClient : ILotofacilApiClient
             }
         }
 
-        // Alguns servidores enviam Retry-After como string raw.
         if (resp.Headers.TryGetValues("Retry-After", out var values))
         {
             var v = values.FirstOrDefault();
@@ -122,4 +118,3 @@ public sealed class LotodicasApiClient : ILotofacilApiClient
         return null;
     }
 }
-

@@ -16,7 +16,7 @@ public sealed class V0ContractBehaviorTests
         var api = new FakeApi(latestId: 10);
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq);
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(5, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, null, clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
@@ -35,7 +35,7 @@ public sealed class V0ContractBehaviorTests
         var api = new FakeApi(latestId: 10);
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq);
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(5, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, null, clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
@@ -53,7 +53,7 @@ public sealed class V0ContractBehaviorTests
         var api = new FakeApi(latestId: 999);
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq);
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(123, "2026-04-27", clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(123, "2026-04-27", clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
@@ -70,11 +70,11 @@ public sealed class V0ContractBehaviorTests
         var api = new FakeApi(latestId: 10);
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(10, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(10, null, clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
-        Assert.Equal(new[] { "GetLatest" }, api.Calls);
+        Assert.Equal(new[] { "GetLatest:lotofacil" }, api.Calls);
         Assert.Empty(blob.Events);
         Assert.Empty(state.Events);
     }
@@ -89,11 +89,11 @@ public sealed class V0ContractBehaviorTests
 
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(0, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(0, null, clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
-        Assert.Equal(new[] { "GetLatest", "GetById:1" }, api.Calls);
+        Assert.Equal(new[] { "GetLatest:lotofacil", "GetById:lotofacil:1" }, api.Calls);
         Assert.Equal(1, blob.Events.Count(e => e.StartsWith("Write:")));
         Assert.Equal(1, state.Events.Count(e => e.StartsWith("Write:")));
         Assert.True(
@@ -118,7 +118,7 @@ public sealed class V0ContractBehaviorTests
 
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(0, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(0, null, clock.UtcNow, null));
 
         // Execução 1: com pacing 10s e janela 180s (e orçamento mínimo de 15s), deve materializar somente 1..18 (não cabe iniciar 19).
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
@@ -148,7 +148,7 @@ public sealed class V0ContractBehaviorTests
 
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        var state = new InMemoryStateStore(seq, existing: new LotofacilState(0, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(0, null, clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
         var writesAfterFirstRun = blob.Events.Count + state.Events.Count;
@@ -203,7 +203,7 @@ public sealed class V0ContractBehaviorTests
         }
     }
 
-    private sealed class FakeApi : ILotofacilApiClient
+    private sealed class FakeApi : ILotteriesApiClient
     {
         private readonly Dictionary<int, string> _byId = new();
         private int _latestId;
@@ -223,15 +223,15 @@ public sealed class V0ContractBehaviorTests
             return this;
         }
 
-        public Task<int> GetLatestContestIdAsync(CancellationToken ct)
+        public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct)
         {
-            Calls.Add("GetLatest");
+            Calls.Add($"GetLatest:{lotteryApiSegment}");
             return Task.FromResult(_latestId);
         }
 
-        public Task<object> GetContestByIdRawAsync(int contestId, CancellationToken ct)
+        public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct)
         {
-            Calls.Add($"GetById:{contestId}");
+            Calls.Add($"GetById:{lotteryApiSegment}:{contestId}");
             if (!_byId.TryGetValue(contestId, out var raw))
             {
                 throw new InvalidOperationException($"Missing fixture for contestId={contestId}");
@@ -240,7 +240,7 @@ public sealed class V0ContractBehaviorTests
         }
     }
 
-    private sealed class InMemoryBlobStore : ILotofacilBlobStore
+    private sealed class InMemoryBlobStore : ILoteriaBlobStore
     {
         private readonly EventSequencer _seq;
         public InMemoryBlobStore(EventSequencer seq, LotofacilBlobDocument? existing = null)
@@ -271,17 +271,17 @@ public sealed class V0ContractBehaviorTests
         }
     }
 
-    private sealed class InMemoryStateStore : ILotofacilStateStore
+    private sealed class InMemoryStateStore : ILoteriaStateStore
     {
         private readonly EventSequencer _seq;
 
-        public InMemoryStateStore(EventSequencer seq, LotofacilState? existing = null)
+        public InMemoryStateStore(EventSequencer seq, LoteriaLoaderState? existing = null)
         {
             _seq = seq;
             Current = existing;
         }
 
-        public LotofacilState? Current { get; private set; }
+        public LoteriaLoaderState? Current { get; private set; }
         public List<string> Events { get; } = new();
         public int SequenceIdOfLastWrite { get; private set; } = -1;
 
@@ -291,8 +291,8 @@ public sealed class V0ContractBehaviorTests
         {
             Current = state switch
             {
-                LotofacilState s => s,
-                string raw => JsonSerializer.Deserialize<LotofacilState>(raw),
+                LoteriaLoaderState s => s,
+                string raw => JsonSerializer.Deserialize<LoteriaLoaderState>(raw),
                 _ => throw new InvalidOperationException($"Unsupported state type: {state.GetType().FullName}")
             };
 

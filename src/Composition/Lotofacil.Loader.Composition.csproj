@@ -3,7 +3,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Application\Lotofacil.Loader.Application.csproj" />
     <ProjectReference Include="..\Domain\Lotofacil.Loader.Domain.csproj" />
-    <ProjectReference Include="..\Infrastructure\Lotofacil.Loader.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

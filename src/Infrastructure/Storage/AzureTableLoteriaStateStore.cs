@@ -6,17 +6,25 @@ using Microsoft.Extensions.Options;
 
 namespace Lotofacil.Loader.Infrastructure;
 
-public sealed class AzureTableLotofacilStateStore : ILotofacilStateStore
+public sealed class AzureTableLoteriaStateStore : ILoteriaStateStore
 {
-    private const string PartitionKeyValue = "Lotofacil";
     private const string RowKeyValue = "Loader";
 
     private readonly TableClient _table;
+    private readonly string _partitionKey;
 
-    public AzureTableLotofacilStateStore(IOptions<StorageOptions> storage)
+    public AzureTableLoteriaStateStore(IOptions<StorageOptions> storage, string partitionKey)
     {
         var opt = storage.Value;
-        _table = new TableClient(opt.ConnectionString, opt.LotofacilStateTable);
+        _table = new TableClient(opt.ConnectionString, opt.LoteriasStateTable);
+        _partitionKey = partitionKey;
+    }
+
+    /// <summary>Para testes e composição manual sem IOptions.</summary>
+    public AzureTableLoteriaStateStore(string connectionString, string tableName, string partitionKey)
+    {
+        _table = new TableClient(connectionString, tableName);
+        _partitionKey = partitionKey;
     }
 
     public async Task<object?> TryReadRawAsync(CancellationToken ct)
@@ -25,13 +33,13 @@ public sealed class AzureTableLotofacilStateStore : ILotofacilStateStore
 
         try
         {
-            var resp = await _table.GetEntityAsync<TableEntity>(PartitionKeyValue, RowKeyValue, cancellationToken: ct);
+            var resp = await _table.GetEntityAsync<TableEntity>(_partitionKey, RowKeyValue, cancellationToken: ct);
             var e = resp.Value;
 
             var lastId = e.GetInt32("LastLoadedContestId") ?? 0;
             var lastDate = e.TryGetValue("LastLoadedDrawDate", out var v) ? v as string : null;
 
-            return new LotofacilState(
+            return new LoteriaLoaderState(
                 LastLoadedContestId: lastId,
                 LastLoadedDrawDate: lastDate,
                 LastUpdatedAtUtc: e.GetDateTimeOffset("LastUpdatedAtUtc") ?? DateTimeOffset.MinValue,
@@ -48,12 +56,12 @@ public sealed class AzureTableLotofacilStateStore : ILotofacilStateStore
     {
         await _table.CreateIfNotExistsAsync(ct);
 
-        if (state is not LotofacilState st)
+        if (state is not LoteriaLoaderState st)
         {
-            throw new InvalidOperationException($"Expected {nameof(LotofacilState)}.");
+            throw new InvalidOperationException($"Expected {nameof(LoteriaLoaderState)}.");
         }
 
-        var entity = new TableEntity(PartitionKeyValue, RowKeyValue)
+        var entity = new TableEntity(_partitionKey, RowKeyValue)
         {
             ["LastLoadedContestId"] = st.LastLoadedContestId,
             ["LastLoadedDrawDate"] = st.LastLoadedDrawDate,
@@ -62,13 +70,10 @@ public sealed class AzureTableLotofacilStateStore : ILotofacilStateStore
 
         if (string.IsNullOrWhiteSpace(st.ETag))
         {
-            // Primeira escrita (sem ETag): upsert é suficiente.
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
             return;
         }
 
-        // Concurrency: ETag obrigatório (seção 8/13). Em conflito, o caso de uso deve parar com segurança.
         await _table.UpdateEntityAsync(entity, new ETag(st.ETag), TableUpdateMode.Replace, ct);
     }
 }
-

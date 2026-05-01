@@ -1,8 +1,7 @@
 namespace Lotofacil.Loader.Application;
 
-public interface ILotofacilBlobStore
+public interface ILoteriaStateStore
 {
     Task<object?> TryReadRawAsync(CancellationToken ct);
-    Task WriteRawAsync(object document, CancellationToken ct);
+    Task WriteRawAsync(object state, CancellationToken ct);
 }
-

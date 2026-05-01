@@ -3,11 +3,10 @@ using System.Text.Json;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Lotofacil.Loader.Application;
-using Microsoft.Extensions.Options;
 
 namespace Lotofacil.Loader.Infrastructure;
 
-public sealed class AzureBlobLotofacilBlobStore : ILotofacilBlobStore
+public sealed class AzureBlobLoteriaBlobStore : ILoteriaBlobStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -17,11 +16,10 @@ public sealed class AzureBlobLotofacilBlobStore : ILotofacilBlobStore
     private readonly BlobContainerClient _container;
     private readonly string _blobName;
 
-    public AzureBlobLotofacilBlobStore(IOptions<StorageOptions> storage)
+    public AzureBlobLoteriaBlobStore(string connectionString, string containerName, string blobName)
     {
-        var opt = storage.Value;
-        _container = new BlobContainerClient(opt.ConnectionString, opt.BlobContainer);
-        _blobName = opt.LotofacilBlobName;
+        _container = new BlobContainerClient(connectionString, containerName);
+        _blobName = blobName;
     }
 
     public async Task<object?> TryReadRawAsync(CancellationToken ct)
@@ -36,8 +34,6 @@ public sealed class AzureBlobLotofacilBlobStore : ILotofacilBlobStore
 
         var dl = await blob.DownloadContentAsync(ct);
         var json = dl.Value.Content.ToString();
-
-        // O caso de uso aceita string/JsonDocument/POCO. Preferir JsonDocument para evitar roundtrips.
         return JsonDocument.Parse(json);
     }
 
@@ -46,7 +42,6 @@ public sealed class AzureBlobLotofacilBlobStore : ILotofacilBlobStore
         await _container.CreateIfNotExistsAsync(cancellationToken: ct);
         var blob = _container.GetBlobClient(_blobName);
 
-        // Escrita coerente do documento completo (overwrite) + Content-Type canônico.
         var json = document is string s ? s : JsonSerializer.Serialize(document, JsonOptions);
         var bytes = Encoding.UTF8.GetBytes(json);
 
@@ -58,4 +53,3 @@ public sealed class AzureBlobLotofacilBlobStore : ILotofacilBlobStore
         );
     }
 }
-
