@@ -148,11 +148,13 @@ Referência técnica (normativa do runtime):
 - **Endpoints normativos**:
   - **Último concurso**: `/api/v2/lotofacil/results/last?token=<TOKEN>`
   - **Concurso por id**: `/api/v2/lotofacil/results/{id}?token=<TOKEN>`
+  - **Carga inicial (bulk)**: `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>` (sem paginação; retorna todos os concursos desde o primeiro)
 - **Campos mínimos consumidos do JSON** (qualquer ausência/tipo inesperado é **falha dura**):
   - `data.draw_number` (inteiro; id do concurso)
   - `data.draw_date` (string; `YYYY-MM-DD`)
   - `data.drawing.draw` (array de inteiros)
   - `data.prizes[]` contendo item com `name == "15 acertos"` e campo `winners` (inteiro; pode ser 0)
+  - Para `/results/all`: `data[]` é um array de objetos com os mesmos campos acima por item.
 
 ### 7) Saídas canônicas — artefato no Blob (V0)
 
@@ -216,7 +218,11 @@ Quando o state no Table **não existir**:
     - derivar `LastLoadedContestId = max(draws[].contest_id)` e `LastLoadedDrawDate` do item correspondente;
     - persistir o state no Table com esses valores (observando ETag na escrita subsequente).
   - Se não existir (ou `draws` vazio):
-    - inicializar `LastLoadedContestId = 0` e `LastLoadedDrawDate = null`, e persistir o state.
+    - executar **carga inicial (bulk)** via `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>` e materializar o documento canônico do blob;
+    - persistir **blob primeiro** (documento completo);
+    - persistir o state no Table derivando:
+      - `LastLoadedContestId = max(draws[].contest_id)` (ou `0` se a resposta estiver vazia);
+      - `LastLoadedDrawDate` do item correspondente (ou `null` se vazio).
 
 Se existir inconsistência entre Table e Blob:
 
@@ -241,6 +247,10 @@ Após obter `latestId` pelo endpoint “último”:
 
 1. Ler state no Table (`LastLoadedContestId`, `LastLoadedDrawDate`, ETag).
 2. Aplicar encerramentos antecipados (seção 10).
+2.1. Ler blob atual. Se o blob **não existir** ou existir com `draws` **vazio**:
+   - executar a **carga inicial (bulk)** via `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>`;
+   - persistir **blob primeiro** e então atualizar o state no Table para o `max(contest_id)` materializado;
+   - encerrar com sucesso (os endpoints incrementais servem para atualizar concursos novos após o bootstrap).
 3. Chamar endpoint “último” e obter `latestId = data.draw_number`.
 4. Se `latestId <= LastLoadedContestId`: encerrar.
 5. Calcular lacunas `id` no intervalo **contíguo** \([LastLoadedContestId + 1, latestId]\), em ordem crescente.

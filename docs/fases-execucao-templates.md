@@ -247,6 +247,44 @@ Critério de pronto:
 - existe evidência rastreável do comportamento V0 conforme contrato.
 ```
 
+## Fase incremental — Bootstrap (carga inicial) via `/results/all` quando blob ausente/vazio
+
+```md
+Implemente apenas a fatia “carga inicial (bulk) via `/results/all`”:
+- se o blob da modalidade **não existir** ou existir com `draws` **vazio**, executar bootstrap chamando `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>`;
+- persistir **blob primeiro** (documento completo) e então atualizar o state no Table para `max(contest_id)`;
+- após bootstrap, a atualização incremental continua usando `/results/last` + `/results/{id}` para novos concursos.
+
+Fatia do spec que estou materializando:
+- docs/spec-driven-execution-guide.md
+  - seção 6 (endpoints normativos; inclui `/results/all`)
+  - seção 9 (primeira execução / blob ausente/vazio ⇒ bootstrap)
+  - seção 11 (algoritmo normativo; passo 2.1)
+- docs/brief.md (escopo: carga inicial via `/results/all`)
+
+Plano de teste (prova):
+- docs/test-plan.md (casos B2.1, B2.2 e B2.3)
+
+Arquivos que podem ser alterados (mínimo possível):
+- docs/spec-driven-execution-guide.md (somente se precisar alinhar contrato)
+- docs/test-plan.md (somente se precisar alinhar plano de teste)
+- tests/** (fixtures + testes para `/results/all` e bootstrap)
+- src/Infrastructure/Http/LotodicasApiClient.cs (novo método para `/results/all`, parametrizado por `lotteryApiSegment`)
+- src/Application/UseCases/LoteriaResultsUpdateUseCase.cs (ramo de bootstrap quando blob ausente/vazio)
+
+Restrições:
+- não inventar paginação: `/results/all` é sem paginação e retorna todos os concursos desde o primeiro;
+- critério de bootstrap: “blob inexistente OU `draws` vazio” (não extrapolar);
+- respeitar o contrato: persistência **blob → table**; sem defaults ocultos; determinismo do documento canônico;
+- após bootstrap, não usar `/results/all` quando o blob já contiver `draws`.
+
+Critério de pronto:
+- testes provam:
+  - blob inexistente ⇒ chama `/results/all` e materializa o documento;
+  - blob com `draws: []` ⇒ chama `/results/all`;
+  - blob com `draws` não vazio ⇒ não chama `/results/all` e segue incremental.
+```
+
 ## Fase 8 — Teste de integração “ponta a ponta” controlado (sem Docker, quando possível)
 
 ```md

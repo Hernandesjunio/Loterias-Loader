@@ -9,6 +9,7 @@ Validar que uma Azure Function (Timer Trigger) em C#/.NET:
 - Atualiza um **documento JSON** num blob (nome do blob: **`Lotofacil`**) contendo `draws`.
 - Mantém um **estado** no Table Storage para saber o **último concurso carregado** e evitar trabalho redundante.
 - Usa a API (`/results/last` e `/results/{id}`) para descobrir o último concurso disponível e preencher lacunas.
+- Quando o blob não existir (ou existir com `draws` vazio), realiza **carga inicial (bulk)** via endpoint `/results/all` e materializa o documento inicial.
 - Respeita as regras de encerramento antecipado (dia útil, 20h, já carregado hoje), a janela interna de **3 minutos**, e a política de resiliência/cadência (Polly, 429/Retry-After, pacing mínimo de 10s quando aplicável).
 
 ## Fonte de verdade (recorte do spec)
@@ -40,6 +41,7 @@ Nos testes, deve ser possível disparar a execução (manual/forçada) e também
 - **API Lotodicas**:
   - Último concurso: `https://www.lotodicas.com.br/api/v2/lotofacil/results/last?token=<TOKEN>`
   - Concurso específico: `https://www.lotodicas.com.br/api/v2/lotofacil/results/{id}?token=<TOKEN>`
+  - Carga inicial (bulk): `https://www.lotodicas.com.br/api/v2/<lotteryApiSegment>/results/all?token=<TOKEN>`
 - **Azure Storage Account**:
   - **Blob Storage** (documento com `draws`, blob nomeado `Lotofacil`)
   - **Table Storage** (estado do loader; exemplo discutido: tabela `LotofacilState`, PK `Lotofacil`, RK `Loader`)
@@ -191,6 +193,31 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
     - Chama `/results/last` uma vez
     - Não chama `/results/{id}`
     - Não atualiza blob nem table (não há novos concursos)
+
+### B.2 Bootstrap (carga inicial) quando blob ausente/vazio
+
+- **B2.1 — blob inexistente ⇒ usa `/results/all`**
+  - **Pré-condição (Blob)**: o blob da modalidade não existe no container.
+  - **Entrada (API /results/all)**: resposta determinística com `data[]` contendo concursos desde o primeiro.
+  - **Execução**: disparar a execução do Timer Trigger (em condição que não seja encerramento antecipado).
+  - **Saída esperada**:
+    - Chama `/results/all` (e não depende de `/results/{id}` para o bootstrap)
+    - Persiste o blob com `draws` materializado a partir de `data[]`
+    - Persiste o Table Storage com `LastLoadedContestId = max(draws[].contest_id)` e `LastLoadedDrawDate` coerente
+    - Confirma **ordem**: blob atualizado antes do table
+
+- **B2.2 — blob existe com `draws` vazio ⇒ usa `/results/all`**
+  - **Pré-condição (Blob)**: blob existe e o documento contém `draws: []`.
+  - **Entrada (API /results/all)**: igual a B2.1.
+  - **Saída esperada**: igual a B2.1.
+
+- **B2.3 — após bootstrap, atualização incremental usa `/results/last` + `/results/{id}`**
+  - **Pré-condição**: após executar B2.1/B2.2, o blob contém `draws` não vazio e o Table está alinhado ao último concurso materializado.
+  - **Entrada (API /results/last)**: retorna `latestId` maior que `LastLoadedContestId`.
+  - **Entrada (API /results/{id})**: resposta determinística para `id = LastLoadedContestId + 1` (e demais ids em falta, se aplicável).
+  - **Saída esperada**:
+    - Chama `/results/last` e `/results/{id}` para preencher lacunas
+    - Não chama `/results/all` neste cenário
 
 ### C. Atualização com lacunas (processamento de 1 ou mais ids)
 
