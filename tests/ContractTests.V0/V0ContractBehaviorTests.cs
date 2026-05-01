@@ -69,7 +69,7 @@ public sealed class V0ContractBehaviorTests
         var delay = new FakeDelay(clock);
         var api = new FakeApi(latestId: 10);
         var seq = new EventSequencer();
-        var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(10, "2026-04-27"));
         var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(10, null, clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
@@ -80,12 +80,40 @@ public sealed class V0ContractBehaviorTests
     }
 
     [Fact]
-    public async Task When_gap_exists_persists_blob_before_state()
+    public async Task Bootstrap_blob_absent_calls_results_all_and_persists_blob_before_state()
     {
         var clock = new FakeClock(Utc("2026-04-27T23:30:00Z"));
         var delay = new FakeDelay(clock);
-        var api = new FakeApi(latestId: 1)
-            .WithContest(1, ContestJson(id: 1, date: "2026-04-27", winners15: 5));
+        var api = new FakeApi(latestId: 999)
+            .WithAllResults(AllResultsJson(
+                ContestItemJson(id: 1, date: "2026-04-20", winners15: 0),
+                ContestItemJson(id: 2, date: "2026-04-21", winners15: 3)));
+
+        var seq = new EventSequencer();
+        var blob = InMemoryBlobStore.WithoutExistingBlob(seq);
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(0, null, clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
+
+        Assert.Equal(new[] { "GetAll:lotofacil" }, api.Calls);
+        Assert.Equal(new[] { 1, 2 }, blob.Current.Draws.Select(d => d.ContestId).ToArray());
+        Assert.Equal(2, state.Current!.LastLoadedContestId);
+        Assert.Equal("2026-04-21", state.Current.LastLoadedDrawDate);
+        Assert.True(
+            blob.SequenceIdOfLastWrite < state.SequenceIdOfLastWrite,
+            "Contrato V0: persistir blob antes do Table state."
+        );
+    }
+
+    [Fact]
+    public async Task Bootstrap_blob_with_empty_draws_calls_results_all()
+    {
+        var clock = new FakeClock(Utc("2026-04-27T23:30:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 999)
+            .WithAllResults(AllResultsJson(
+                ContestItemJson(id: 1, date: "2026-04-20", winners15: 0),
+                ContestItemJson(id: 2, date: "2026-04-21", winners15: 3)));
 
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
@@ -93,7 +121,44 @@ public sealed class V0ContractBehaviorTests
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
-        Assert.Equal(new[] { "GetLatest:lotofacil", "GetById:lotofacil:1" }, api.Calls);
+        Assert.Equal(new[] { "GetAll:lotofacil" }, api.Calls);
+        Assert.Equal(new[] { 1, 2 }, blob.Current.Draws.Select(d => d.ContestId).ToArray());
+        Assert.Equal(2, state.Current!.LastLoadedContestId);
+    }
+
+    [Fact]
+    public async Task Blob_with_non_empty_draws_skips_results_all_and_uses_incremental()
+    {
+        var clock = new FakeClock(Utc("2026-04-27T23:30:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 7)
+            .WithContest(6, ContestJson(id: 6, date: "2026-04-26", winners15: 0))
+            .WithContest(7, ContestJson(id: 7, date: "2026-04-27", winners15: 5));
+
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-25"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-25", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
+
+        Assert.Equal(new[] { "GetLatest:lotofacil", "GetById:lotofacil:6", "GetById:lotofacil:7" }, api.Calls);
+    }
+
+    [Fact]
+    public async Task When_gap_exists_persists_blob_before_state()
+    {
+        var clock = new FakeClock(Utc("2026-04-27T23:30:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 6)
+            .WithContest(6, ContestJson(id: 6, date: "2026-04-27", winners15: 5));
+
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-25"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-25", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
+
+        Assert.Equal(new[] { "GetLatest:lotofacil", "GetById:lotofacil:6" }, api.Calls);
         Assert.Equal(1, blob.Events.Count(e => e.StartsWith("Write:")));
         Assert.Equal(1, state.Events.Count(e => e.StartsWith("Write:")));
         Assert.True(
@@ -110,24 +175,24 @@ public sealed class V0ContractBehaviorTests
         var clock = new FakeClock(t0);
         var delay = new FakeDelay(clock);
         var api = new FakeApi(latestId: 25);
-        for (var id = 1; id <= 25; id++)
+        for (var id = 2; id <= 25; id++)
         {
             var date = id == 25 ? "2026-04-27" : $"2026-04-{(id % 28) + 1:00}";
             api.WithContest(id, ContestJson(id, date, winners15: 0));
         }
 
         var seq = new EventSequencer();
-        var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(0, null, clock.UtcNow, null));
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(1, "2026-04-01"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(1, "2026-04-01", clock.UtcNow, null));
 
-        // Execução 1: com pacing 10s e janela 180s (e orçamento mínimo de 15s), deve materializar somente 1..18 (não cabe iniciar 19).
+        // Execução 1: com pacing 10s e janela 180s (e orçamento mínimo de 15s), deve materializar somente 2..19 (não cabe iniciar 20).
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
         Assert.NotNull(state.Current);
-        Assert.Equal(18, state.Current!.LastLoadedContestId);
-        Assert.Contains(blob.Current.Draws, d => d.ContestId == 1);
-        Assert.Contains(blob.Current.Draws, d => d.ContestId == 18);
-        Assert.DoesNotContain(blob.Current.Draws, d => d.ContestId == 19);
+        Assert.Equal(19, state.Current!.LastLoadedContestId);
+        Assert.Contains(blob.Current.Draws, d => d.ContestId == 2);
+        Assert.Contains(blob.Current.Draws, d => d.ContestId == 19);
+        Assert.DoesNotContain(blob.Current.Draws, d => d.ContestId == 20);
 
         // Execução 2: avança o relógio para o próximo "tick" (ainda após 20h no dia útil) e deve retomar em 4.
         clock.SetUtcNow(t0.AddHours(1));
@@ -143,18 +208,18 @@ public sealed class V0ContractBehaviorTests
     {
         var clock = new FakeClock(Utc("2026-04-27T23:30:00Z"));
         var delay = new FakeDelay(clock);
-        var api = new FakeApi(latestId: 1)
-            .WithContest(1, ContestJson(id: 1, date: "2026-04-27", winners15: 0));
+        var api = new FakeApi(latestId: 2)
+            .WithContest(2, ContestJson(id: 2, date: "2026-04-27", winners15: 0));
 
         var seq = new EventSequencer();
-        var blob = new InMemoryBlobStore(seq, existing: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(0, null, clock.UtcNow, null));
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(1, "2026-04-20"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(1, "2026-04-20", clock.UtcNow, null));
 
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
         var writesAfterFirstRun = blob.Events.Count + state.Events.Count;
 
         // Ajusta o estado como se tivesse persistido e "último" não avançou.
-        api.SetLatest(1);
+        api.SetLatest(2);
         clock.SetUtcNow(clock.UtcNow.AddMinutes(10));
         await EntryPoint.RunAsync(api, blob, state, clock, delay, CancellationToken.None);
 
@@ -183,6 +248,39 @@ public sealed class V0ContractBehaviorTests
         return JsonSerializer.Serialize(obj);
     }
 
+    private static string ContestItemJson(int id, string date, int winners15)
+    {
+        var obj = new
+        {
+            draw_number = id,
+            draw_date = date,
+            drawing = new { draw = new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 } },
+            prizes = new[]
+            {
+                new { name = "15 acertos", winners = winners15 }
+            }
+        };
+
+        return JsonSerializer.Serialize(obj);
+    }
+
+    private static string AllResultsJson(params string[] contestItemsJson)
+    {
+        var items = contestItemsJson.Select(static item => JsonSerializer.Deserialize<JsonElement>(item)).ToArray();
+        return JsonSerializer.Serialize(new { data = items });
+    }
+
+    private static LotofacilBlobDocument BlobWithOneDraw(int contestId, string date) =>
+        new(new[]
+        {
+            new LotofacilBlobDraw(
+                ContestId: contestId,
+                DrawDate: date,
+                Numbers: new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+                Winners15: 0,
+                HasWinner15: false)
+        });
+
     private sealed class FakeClock : IClock
     {
         public FakeClock(DateTimeOffset utcNow) => UtcNow = utcNow;
@@ -206,6 +304,7 @@ public sealed class V0ContractBehaviorTests
     private sealed class FakeApi : ILotteriesApiClient
     {
         private readonly Dictionary<int, string> _byId = new();
+        private string? _allResultsRaw;
         private int _latestId;
         public FakeApi(int latestId) => _latestId = latestId;
 
@@ -220,6 +319,12 @@ public sealed class V0ContractBehaviorTests
         public FakeApi WithContest(int id, string rawJson)
         {
             _byId[id] = rawJson;
+            return this;
+        }
+
+        public FakeApi WithAllResults(string rawJson)
+        {
+            _allResultsRaw = rawJson;
             return this;
         }
 
@@ -238,22 +343,47 @@ public sealed class V0ContractBehaviorTests
             }
             return Task.FromResult<object>(raw);
         }
+
+        public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct)
+        {
+            Calls.Add($"GetAll:{lotteryApiSegment}");
+            if (string.IsNullOrWhiteSpace(_allResultsRaw))
+            {
+                throw new InvalidOperationException("Missing fixture for /results/all");
+            }
+
+            return Task.FromResult<object>(_allResultsRaw);
+        }
     }
 
     private sealed class InMemoryBlobStore : ILoteriaBlobStore
     {
         private readonly EventSequencer _seq;
+        private bool _exists;
+
         public InMemoryBlobStore(EventSequencer seq, LotofacilBlobDocument? existing = null)
         {
             _seq = seq;
+            _exists = true;
             Current = existing ?? new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>());
         }
+
+        private InMemoryBlobStore(EventSequencer seq, bool exists, LotofacilBlobDocument current)
+        {
+            _seq = seq;
+            _exists = exists;
+            Current = current;
+        }
+
+        public static InMemoryBlobStore WithoutExistingBlob(EventSequencer seq) =>
+            new(seq, exists: false, current: new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
 
         public LotofacilBlobDocument Current { get; private set; }
         public List<string> Events { get; } = new();
         public int SequenceIdOfLastWrite { get; private set; } = -1;
 
-        public Task<object?> TryReadRawAsync(CancellationToken ct) => Task.FromResult<object?>(Current);
+        public Task<object?> TryReadRawAsync(CancellationToken ct) =>
+            Task.FromResult<object?>(_exists ? Current : null);
 
         public Task WriteRawAsync(object document, CancellationToken ct)
         {
@@ -264,6 +394,7 @@ public sealed class V0ContractBehaviorTests
                             new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()),
                 _ => throw new InvalidOperationException($"Unsupported blob document type: {document.GetType().FullName}")
             };
+            _exists = true;
 
             SequenceIdOfLastWrite = _seq.Next();
             Events.Add($"Write:{SequenceIdOfLastWrite}");

@@ -16,6 +16,7 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
     private readonly ConcurrentQueue<RecordedCall> _calls = new();
     private readonly Dictionary<(string Modality, int Id), string> _byId = new();
     private readonly Dictionary<string, string> _lastJsonByModality = new();
+    private readonly Dictionary<string, string> _allJsonByModality = new();
     private WebApplication? _app;
 
     public LotodicasFakeServer(string token) => _token = token;
@@ -36,6 +37,12 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         return this;
     }
 
+    public LotodicasFakeServer WithAllResponseJson(string modality, string json)
+    {
+        _allJsonByModality[modality] = json;
+        return this;
+    }
+
     public async Task StartAsync(CancellationToken ct)
     {
         if (_app is not null)
@@ -51,6 +58,11 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         app.MapGet("/api/v2/{modality}/results/last", async (HttpContext context, string modality) =>
         {
             await HandleAsync(context, modality, endpoint: "last", contestId: null);
+        });
+
+        app.MapGet("/api/v2/{modality}/results/all", async (HttpContext context, string modality) =>
+        {
+            await HandleAsync(context, modality, endpoint: "all", contestId: null);
         });
 
         app.MapGet("/api/v2/{modality}/results/{id:int}", async (HttpContext context, string modality, int id) =>
@@ -97,6 +109,7 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         string? payload = endpoint switch
         {
             "last" => _lastJsonByModality.GetValueOrDefault(modality),
+            "all" => _allJsonByModality.GetValueOrDefault(modality),
             "by_id" when contestId is not null && _byId.TryGetValue((modality, contestId.Value), out var j) => j,
             _ => null
         };

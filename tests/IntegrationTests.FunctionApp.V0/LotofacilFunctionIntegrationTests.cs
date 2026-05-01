@@ -63,10 +63,10 @@ public sealed class LotofacilFunctionIntegrationTests
         await blobContainer.CreateIfNotExistsAsync();
 
         var lotofacilBlob = blobContainer.GetBlobClient(lotofacilBlobName);
-        await lotofacilBlob.UploadAsync(BinaryData.FromString("{\"draws\":[]}"), overwrite: true);
+        await lotofacilBlob.UploadAsync(BinaryData.FromString(SeedLotofacilBlobJsonFor5()), overwrite: true);
 
         var megaBlob = blobContainer.GetBlobClient(megaBlobName);
-        await megaBlob.UploadAsync(BinaryData.FromString("{\"draws\":[]}"), overwrite: true);
+        await megaBlob.UploadAsync(BinaryData.FromString(SeedMegaSenaBlobJsonFor5()), overwrite: true);
 
         var infraCfg = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -238,6 +238,36 @@ public sealed class LotofacilFunctionIntegrationTests
               "numbers": [1,2,3,4,5,6],
               "winners_6": 2,
               "has_winner_6": true
+            }
+          ]
+        }
+        """;
+
+    private static string SeedLotofacilBlobJsonFor5() =>
+        """
+        {
+          "draws": [
+            {
+              "contest_id": 5,
+              "draw_date": "2026-04-01",
+              "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+              "winners_15": 0,
+              "has_winner_15": false
+            }
+          ]
+        }
+        """;
+
+    private static string SeedMegaSenaBlobJsonFor5() =>
+        """
+        {
+          "draws": [
+            {
+              "contest_id": 5,
+              "draw_date": "2026-04-01",
+              "numbers": [1,2,3,4,5,6],
+              "winners_6": 0,
+              "has_winner_6": false
             }
           ]
         }

@@ -81,6 +81,13 @@ public sealed class LoteriaResultsUpdateUseCase
                 deadlineSeconds);
         }
 
+        var doc = await ReadBlobDocumentAsync(ct);
+        var drawsById = ToDrawMap(doc);
+        if (drawsById.Count == 0)
+        {
+            return await ExecuteBootstrapAsync(state, deadlineSeconds, ct);
+        }
+
         var latestId = await _api.GetLatestContestIdAsync(_lotteryApiSegment, ct);
         if (latestId <= state.LastLoadedContestId)
         {
@@ -92,9 +99,6 @@ public sealed class LoteriaResultsUpdateUseCase
                 state.LastLoadedContestId,
                 deadlineSeconds);
         }
-
-        var doc = await ReadBlobDocumentAsync(ct);
-        var drawsById = ToDrawMap(doc);
 
         var nextId = state.LastLoadedContestId + 1;
         var lastPersistableId = state.LastLoadedContestId;
@@ -256,6 +260,16 @@ public sealed class LoteriaResultsUpdateUseCase
             maxDate = _catalog.GetDrawDateFromDraw(maxDraw);
         }
 
+        if (max is null)
+        {
+            return new LoteriaLoaderState(
+                LastLoadedContestId: 0,
+                LastLoadedDrawDate: null,
+                LastUpdatedAtUtc: _clock.UtcNow,
+                ETag: null
+            );
+        }
+
         var init = new LoteriaLoaderState(
             LastLoadedContestId: max ?? 0,
             LastLoadedDrawDate: maxDate,
@@ -281,6 +295,64 @@ public sealed class LoteriaResultsUpdateUseCase
         }
 
         return _catalog.ParseDocument(raw);
+    }
+
+    private async Task<UpdateLoteriaResultsOutcome> ExecuteBootstrapAsync(
+        LoteriaLoaderState state,
+        int deadlineSeconds,
+        CancellationToken ct)
+    {
+        var rawAll = await _api.GetAllResultsRawAsync(_lotteryApiSegment, ct);
+        var drawsById = new Dictionary<int, object>();
+        foreach (var rawContest in EnumerateBulkContests(rawAll))
+        {
+            var draw = _catalog.ParseContestToDraw(rawContest);
+            drawsById[_catalog.GetContestIdFromDraw(draw)] = draw;
+        }
+
+        var bootstrapDoc = _catalog.MergeOrderedDraws(drawsById);
+        await _blob.WriteRawAsync(bootstrapDoc, ct);
+
+        var maxContestId = drawsById.Count == 0 ? 0 : drawsById.Keys.Max();
+        string? maxDrawDate = null;
+        if (drawsById.TryGetValue(maxContestId, out var maxDraw))
+        {
+            maxDrawDate = _catalog.GetDrawDateFromDraw(maxDraw);
+        }
+
+        var bootstrapState = state with
+        {
+            LastLoadedContestId = maxContestId,
+            LastLoadedDrawDate = maxDrawDate,
+            LastUpdatedAtUtc = _clock.UtcNow
+        };
+
+        await _state.WriteRawAsync(bootstrapState, ct);
+
+        return new UpdateLoteriaResultsOutcome(
+            ModalityKey: _modalityKey,
+            ReasonStop: ReasonStop.COMPLETED_SUCCESS,
+            LastLoadedContestId: state.LastLoadedContestId,
+            LatestId: null,
+            ProcessedCount: drawsById.Count,
+            PersistedLastId: maxContestId,
+            DeadlineSeconds: deadlineSeconds,
+            Timezone: "America/Sao_Paulo"
+        );
+    }
+
+    private static IEnumerable<object> EnumerateBulkContests(object rawAll)
+    {
+        var root = ToRootElement(rawAll);
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Payload /results/all inválido: data[] ausente.");
+        }
+
+        foreach (var item in data.EnumerateArray())
+        {
+            yield return JsonSerializer.Serialize(new { data = item }, JsonOptions());
+        }
     }
 
     private LoteriaLoaderState ParseState(object raw)
@@ -317,4 +389,27 @@ public sealed class LoteriaResultsUpdateUseCase
     {
         PropertyNameCaseInsensitive = true
     };
+
+    private static JsonElement ToRootElement(object raw)
+    {
+        if (raw is JsonDocument jd)
+        {
+            return jd.RootElement.Clone();
+        }
+
+        if (raw is JsonElement je)
+        {
+            return je.Clone();
+        }
+
+        if (raw is string s)
+        {
+            using var doc = JsonDocument.Parse(s);
+            return doc.RootElement.Clone();
+        }
+
+        var json = JsonSerializer.Serialize(raw, JsonOptions());
+        using var d = JsonDocument.Parse(json);
+        return d.RootElement.Clone();
+    }
 }

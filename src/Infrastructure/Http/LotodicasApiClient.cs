@@ -28,6 +28,9 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
     public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
         GetContestByIdCoreAsync(lotteryApiSegment, contestId, ct);
 
+    public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct) =>
+        GetAllResultsCoreAsync(lotteryApiSegment, ct);
+
     private async Task<int> GetLatestContestIdCoreAsync(string lotteryApiSegment, CancellationToken ct)
     {
         using var doc = await SendJsonWithResilienceAsync(
@@ -41,6 +44,12 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
     private async Task<object> GetContestByIdCoreAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
         await SendJsonWithResilienceAsync(
             relativePath: $"/api/v2/{lotteryApiSegment}/results/{contestId}?token={Uri.EscapeDataString(_options.Token)}",
+            ct
+        );
+
+    private async Task<object> GetAllResultsCoreAsync(string lotteryApiSegment, CancellationToken ct) =>
+        await SendJsonWithResilienceAsync(
+            relativePath: $"/api/v2/{lotteryApiSegment}/results/all?token={Uri.EscapeDataString(_options.Token)}",
             ct
         );
 
