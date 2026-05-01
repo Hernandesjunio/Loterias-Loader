@@ -11,11 +11,49 @@ on:
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # set this to the path to your web app project, defaults to the repository root
+  FUNCTIONAPP_PROJECT_PATH: 'src/FunctionApp/Lotofacil.Loader.FunctionApp.csproj'
+  SOLUTION_PATH: 'Lotofacil.Loader.slnx'
   DOTNET_VERSION: '8.0.x' # set this to the dotnet version to use
 
 jobs:
+  test:
+    name: Testes (.NET)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restaurar dependências (solução)
+        run: dotnet restore '${{ env.SOLUTION_PATH }}'
+
+      - name: Executar testes (Release)
+        run: >
+          dotnet test '${{ env.SOLUTION_PATH }}'
+          --configuration Release
+          --no-restore
+          --verbosity normal
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory "${{ runner.temp }}/TestResults"
+
+      - name: Publicar resultados de teste (TRX)
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: test-results-trx
+          path: '${{ runner.temp }}/TestResults/**/*.trx'
+          if-no-files-found: warn
+
   build-and-deploy:
     runs-on: windows-latest
+    needs: test
     permissions:
       id-token: write #This is required for requesting the JWT
       contents: read #This is required for actions/checkout
@@ -25,16 +63,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup DotNet ${{ env.DOTNET_VERSION }} Environment
-        uses: actions/setup-dotnet@v1
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: 'Resolve Project Dependencies Using Dotnet'
         shell: pwsh
         run: |
-          pushd './${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
-          dotnet build --configuration Release --output ./output
-          popd
+          dotnet restore '${{ env.FUNCTIONAPP_PROJECT_PATH }}'
+          dotnet publish '${{ env.FUNCTIONAPP_PROJECT_PATH }}' --configuration Release --output './output'
       
       - name: Login to Azure
         uses: azure/login@v2
