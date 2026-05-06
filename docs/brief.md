@@ -37,6 +37,26 @@ O blob será disponibilizado a aplicações externas via **SAS token** (o consum
   - quando aplicável, respeitar **429** e `Retry-After`, e espaçar chamadas (ex.: esperar completar **10 segundos** entre chamadas) desde que ainda caiba na janela.
 - **Sem segredos em código**: token e credenciais (Access Key / equivalente) devem vir de **variáveis de ambiente**.
 
+## Observabilidade (logs e traces)
+
+Objetivo: permitir reconstruir, em produção, **quais passos ocorreram** em uma execução e **por que a execução parou** (incluindo encerramentos antecipados), com correlação por chamada.
+
+- **Logs estruturados**:
+  - a execução deve emitir logs em pontos de ação/decisão relevantes;
+  - o motivo de encerramento deve ser registrado como `reason_stop` (contrato operacional);
+  - os logs devem ser correlacionáveis por `run_id` e, quando habilitado, por `trace_id`.
+- **Debug em produção (controlado por configuração)**:
+  - habilitar/desabilitar logs Debug por categoria usando o padrão .NET `Logging__LogLevel__...`.
+  - exemplo típico:
+    - `Logging__LogLevel__Default=Information`
+    - `Logging__LogLevel__Microsoft=Warning`
+    - `Logging__LogLevel__Lotofacil.Loader=Debug`
+- **Traces (correlação por execução)**:
+  - instrumentação via `Activity`/`ActivitySource` para gerar traces por execução/modality;
+  - compatível com **Application Insights** e **OpenTelemetry** (export definido pelo ambiente).
+
+Detalhes técnicos normativos: ver `docs/adrs/0002-observabilidade-logs-debug-e-tracing.md` e `docs/observability.md`.
+
 ## Contrato de dados (alto nível)
 
 ### Blob (documento JSON)
@@ -105,6 +125,8 @@ Nomes sugeridos na conversa (padrão `Section__Key`):
 ## Referências
 
 - `docs/adrs/0001-lotofacil-loader-azure-function.md`
+- `docs/adrs/0002-observabilidade-logs-debug-e-tracing.md`
+- `docs/observability.md`
 - `docs/spec-driven-execution-guide.md`
 - `docs/fases-execucao-templates.md`
 - `docs/archived/lotofacil-loader-azure-function-contexto.md` (histórico inicial; não normativo)
