@@ -70,6 +70,7 @@ Implemente apenas a atualização do **Contrato V0 (normativo)** dentro de `docs
 
 O contrato deve explicitar:
 - Entradas canônicas (configs/variáveis de ambiente; obrigatórias; validações)
+- Feature toggles operacionais (quais travas/regras podem ser desabilitadas por config; defaults explícitos)
 - Saídas canônicas (artefatos; formato; invariantes)
 - Regras e encerramentos antecipados
 - Limites e janelas (timeout, janela máxima, rate limit / retry)
@@ -80,6 +81,7 @@ Checklist anti-alucinação (obrigatório fixar no contrato):
 - timezone (qual e como é configurada) e como derivar “hoje”
 - definição de “dia útil” (segunda–sexta? feriados? fonte do calendário)
 - regra do “20h” (comparação exata)
+- feature toggles para travas de calendário (nomes de config; defaults; efeito em encerramentos antecipados)
 - expressão CRON final (Azure Functions com segundos)
 - primeira execução (state ausente) e resolução de inconsistências table vs blob
 - invariantes do blob (ordem, dedupe, sobrescrita, serialização canônica)
@@ -97,6 +99,43 @@ Arquivos esperados:
 
 Critério de pronto:
 - o contrato permite escrever testes de contrato sem “inventar” comportamentos.
+```
+
+## Fase incremental — Feature toggles para travas de calendário (dia útil / 20h)
+
+```md
+Implemente apenas a fatia “feature toggles para travas de calendário”:
+- permitir desligar, por configuração, as verificações de:
+  - “hoje é dia útil?” (permite executar no fim de semana)
+  - “já passou das 20h?” (permite executar antes do horário)
+
+Fatia do spec que estou materializando:
+- docs/spec-driven-execution-guide.md
+  - seção 2 (entradas canônicas: feature toggles)
+  - seção 10 (encerramentos antecipados condicionais às toggles)
+- docs/brief.md (restrições e configuração: toggles documentadas)
+
+Plano de teste (prova):
+- adicionar/atualizar testes de contrato para provar:
+  - com toggles desligadas (default), mantém comportamento padrão (dia útil + após 20h);
+  - com `DisableBusinessDayGuard=true`, não encerra no fim de semana;
+  - com `Disable20hGuard=true`, não encerra antes das 20h;
+  - toggles são independentes (combinações possíveis).
+
+Arquivos que podem ser alterados (mínimo possível):
+- docs/spec-driven-execution-guide.md
+- docs/brief.md
+- tests/** (fixtures + testes)
+- src/Application/UseCases/LoteriaResultsUpdateUseCase.cs (aplicar toggles nos early exits)
+- src/**/Options/*.cs e wiring de DI/config (se necessário)
+
+Restrições:
+- defaults explícitos (sem inferência): toggles devem ter default normativo e comportamento documentado;
+- toggles não podem mudar timezone, janela, ou contrato do blob/state; apenas desligar travas de calendário;
+- observabilidade deve registrar o mesmo `reason_stop`, e deve ser possível inferir por logs se a trava foi aplicada ou desabilitada por toggle.
+
+Critério de pronto:
+- docs atualizadas e testes provam os quatro cenários mínimos.
 ```
 
 ## Fase 2 — Fixtures + goldens determinísticos (V0)

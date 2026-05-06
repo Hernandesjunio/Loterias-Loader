@@ -34,6 +34,7 @@ Se alguma resposta estiver pouco clara, a fatia ainda não está pronta.
 Para cada fatia, documente explicitamente (sem inferência):
 
 - **Entradas canônicas**: quais configs/variáveis de ambiente existem, quais são obrigatórias, e seus formatos
+- **Feature toggles operacionais**: quais verificações/regras podem ser habilitadas/desabilitadas por configuração, com defaults explícitos
 - **Saídas canônicas**: quais artefatos são produzidos (ex.: blob JSON), formato e invariantes
 - **Regras e encerramentos antecipados**: quando a execução termina sem efeitos (e por quê)
 - **Limites e janelas**: timeouts, janela máxima de trabalho, rate-limit / retry
@@ -102,6 +103,15 @@ Todas as entradas abaixo são **variáveis de ambiente** (config), lidas no iní
   - **Valor normativo (V0)**: **`LotofacilState`**.
 - **Agendamento do Timer Trigger (V0.1+; adendo incremental)**:
   - ver seção **4.1** (“Agendamento configurável por configuração do host”), que introduz `LotofacilLoader__TimerSchedule` como entrada canônica obrigatória para V0.1+.
+- **Feature toggles — travas de calendário (V0.x; operacionais, opcionais)**:
+  - **`LotofacilLoader__DisableBusinessDayGuard`** (opcional)
+    - **Formato**: boolean (`true`/`false`, case-insensitive).
+    - **Default normativo**: `false`.
+    - **Efeito**: quando `true`, **desabilita** o encerramento antecipado “hoje não é dia útil” (permite execução em finais de semana).
+  - **`LotofacilLoader__Disable20hGuard`** (opcional)
+    - **Formato**: boolean (`true`/`false`, case-insensitive).
+    - **Default normativo**: `false`.
+    - **Efeito**: quando `true`, **desabilita** o encerramento antecipado “antes das 20h” (permite execução antes do horário de corte).
 - **Timezone/relógio (normativo, não configurável na V0)**:
   - **Timezone de referência**: `America/Sao_Paulo` (IANA).
   - **Como derivar “agora” e “hoje”**: obter `nowLocal` convertendo um relógio de referência (UTC) para `America/Sao_Paulo`; então `todayLocal = date(nowLocal)` (apenas a data nessa timezone).
@@ -235,8 +245,8 @@ Encerramentos antecipados são **paradas seguras** (exit code “sucesso” oper
 
 Antes de chamar a API “último”:
 
-- Se `todayLocal` **não** é dia útil: encerrar.
-- Se é dia útil e `nowLocal < todayLocal 20:00:00`: encerrar.
+- Se `todayLocal` **não** é dia útil: encerrar, **a menos que** `LotofacilLoader__DisableBusinessDayGuard == true`.
+- Se é dia útil e `nowLocal < todayLocal 20:00:00`: encerrar, **a menos que** `LotofacilLoader__Disable20hGuard == true`.
 - Se é dia útil e `nowLocal >= todayLocal 20:00:00` e `LastLoadedDrawDate == todayLocal (YYYY-MM-DD)`: encerrar.
 
 Após obter `latestId` pelo endpoint “último”:
@@ -299,6 +309,7 @@ A execução deve emitir logs estruturados suficientes para explicar **por que p
 
 - **Campos mínimos recomendados em logs**:
   - `run_id` (correlação por execução), `deadline_seconds=180`, `timezone=America/Sao_Paulo`
+  - `disable_business_day_guard`, `disable_20h_guard` (valores efetivos das feature toggles de calendário)
   - `reason_stop` (enum), `last_loaded_contest_id`, `latest_id`, `processed_count`, `persisted_last_id`
   - `http_attempts`, `retries_count`, `rate_limit_wait_seconds_total`, `elapsed_seconds`
 - **`reason_stop` (normativo; exemplos de valores)**:

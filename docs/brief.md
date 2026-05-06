@@ -27,7 +27,7 @@ O blob será disponibilizado a aplicações externas via **SAS token** (o consum
 
 ## Restrições e comportamento acordados
 
-- **Calendário do sorteio**: os sorteios ocorrem **somente em dias úteis**, **às 20h**. A avaliação de “hoje” e “20h” depende de uma **timezone explicitamente definida** no ambiente de execução (este documento não fixa a timezone).
+- **Calendário do sorteio**: por padrão, os sorteios ocorrem **somente em dias úteis**, **às 20h**. A avaliação de “hoje” e “20h” depende de uma **timezone explicitamente definida** no ambiente de execução (este documento não fixa a timezone). Exceções operacionais (execução antes das 20h e/ou em finais de semana) são possíveis via **feature toggles** documentadas em “Configuração”.
 - **Frequência**: o schedule do Timer Trigger deve ser **configurável por ambiente** (sem hardcode em código). Valor recomendado para execução “a cada hora”: `0 0 * * * *` (formato com segundos típico do Timer Trigger do Azure Functions).
 - **Janela máxima por execução**: **3 minutos** de trabalho (janela interna), para não estourar o tempo da function no host.
 - **API e cadência**:
@@ -77,8 +77,8 @@ Na conversa foram propostos (como exemplo):
 
 1. Ler do Table Storage o `lastLoaded`.
 2. Encerramento antecipado (antes de chamar a API), para evitar chamadas desnecessárias:
-   - se hoje não é dia útil, encerrar;
-   - se hoje é dia útil e ainda não passou das 20h (na timezone definida), encerrar;
+   - se hoje não é dia útil, encerrar (**a menos que** `LotofacilLoader__DisableBusinessDayGuard=true`);
+   - se hoje é dia útil e ainda não passou das 20h (na timezone definida), encerrar (**a menos que** `LotofacilLoader__Disable20hGuard=true`);
    - se hoje é dia útil, já passou das 20h e `LastLoadedDrawDate == hoje`, encerrar.
 3. Chamar o endpoint `/results/last` e obter `latestId` via `data.draw_number`.
 3. Se `latestId <= lastLoaded`, encerrar (não há novos concursos a carregar).
@@ -92,6 +92,8 @@ Na conversa foram propostos (como exemplo):
 Nomes sugeridos na conversa (padrão `Section__Key`):
 
 - `LotofacilLoader__TimerSchedule`
+- `LotofacilLoader__DisableBusinessDayGuard` (opcional; boolean; padrão `false`): quando `true`, **desabilita** a verificação “hoje não é dia útil” (permite executar em finais de semana).
+- `LotofacilLoader__Disable20hGuard` (opcional; boolean; padrão `false`): quando `true`, **desabilita** a verificação “ainda não passou das 20h” (permite executar antes das 20h).
 - `Lotodicas__BaseUrl`
 - `Lotodicas__Token`
 - `Storage__ConnectionString`
