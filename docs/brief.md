@@ -94,6 +94,7 @@ Nomes sugeridos na conversa (padrão `Section__Key`):
 - `LotofacilLoader__TimerSchedule`
 - `LotofacilLoader__DisableBusinessDayGuard` (opcional; boolean; padrão `false`): quando `true`, **desabilita** a verificação “hoje não é dia útil” (permite executar em finais de semana).
 - `LotofacilLoader__Disable20hGuard` (opcional; boolean; padrão `false`): quando `true`, **desabilita** a verificação “ainda não passou das 20h” (permite executar antes das 20h).
+- `LotofacilLoader__DisableBusinessDayGuard` e `LotofacilLoader__Disable20hGuard` são **independentes** (podem ser combinadas); por padrão (ambas `false`) mantém as travas de calendário.
 - `Lotodicas__BaseUrl`
 - `Lotodicas__Token`
 - `Storage__ConnectionString`

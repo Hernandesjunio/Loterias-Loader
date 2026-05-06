@@ -112,6 +112,9 @@ Todas as entradas abaixo são **variáveis de ambiente** (config), lidas no iní
     - **Formato**: boolean (`true`/`false`, case-insensitive).
     - **Default normativo**: `false`.
     - **Efeito**: quando `true`, **desabilita** o encerramento antecipado “antes das 20h” (permite execução antes do horário de corte).
+  - **Independência**:
+    - As duas toggles são **independentes** e podem ser combinadas.
+    - Defaults normativos (`false`/`false`) mantêm as travas de calendário (dia útil + após 20h).
 - **Timezone/relógio (normativo, não configurável na V0)**:
   - **Timezone de referência**: `America/Sao_Paulo` (IANA).
   - **Como derivar “agora” e “hoje”**: obter `nowLocal` convertendo um relógio de referência (UTC) para `America/Sao_Paulo`; então `todayLocal = date(nowLocal)` (apenas a data nessa timezone).

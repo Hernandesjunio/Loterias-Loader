@@ -9,6 +9,9 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddLotofacilLoaderV0Infrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddOptions<CalendarGuardsTogglesOptions>()
+            .Bind(configuration.GetSection(CalendarGuardsTogglesOptions.SectionName));
+
         services.AddOptions<LotodicasOptions>()
             .Bind(configuration.GetSection(LotodicasOptions.SectionName))
             .Validate(o => !string.IsNullOrWhiteSpace(o.BaseUrl), $"{LotodicasOptions.SectionName}__BaseUrl é obrigatório")
@@ -95,6 +98,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredKeyedService<ILoteriaBlobStore>(modalityKey),
             sp.GetRequiredKeyedService<ILoteriaStateStore>(modalityKey),
             catalog,
+            disableBusinessDayGuard: sp.GetRequiredService<IOptions<CalendarGuardsTogglesOptions>>().Value.DisableBusinessDayGuard,
+            disable20hGuard: sp.GetRequiredService<IOptions<CalendarGuardsTogglesOptions>>().Value.Disable20hGuard,
             modalityKey: modalityKey,
             lotteryApiSegment: lotteryApiSegment);
 }

@@ -12,6 +12,8 @@ public sealed class LoteriaResultsUpdateUseCase
     private readonly ILoteriaBlobStore _blob;
     private readonly ILoteriaStateStore _state;
     private readonly ILoteriaBlobCatalog _catalog;
+    private readonly bool _disableBusinessDayGuard;
+    private readonly bool _disable20hGuard;
     private readonly string _modalityKey;
     private readonly string _lotteryApiSegment;
 
@@ -22,6 +24,8 @@ public sealed class LoteriaResultsUpdateUseCase
         ILoteriaBlobStore blob,
         ILoteriaStateStore state,
         ILoteriaBlobCatalog catalog,
+        bool disableBusinessDayGuard,
+        bool disable20hGuard,
         string modalityKey,
         string lotteryApiSegment)
     {
@@ -31,6 +35,8 @@ public sealed class LoteriaResultsUpdateUseCase
         _blob = blob;
         _state = state;
         _catalog = catalog;
+        _disableBusinessDayGuard = disableBusinessDayGuard;
+        _disable20hGuard = disable20hGuard;
         _modalityKey = modalityKey;
         _lotteryApiSegment = lotteryApiSegment;
     }
@@ -46,12 +52,12 @@ public sealed class LoteriaResultsUpdateUseCase
         var nowLocal = ConvertToSaoPaulo(nowUtc);
         var todayLocal = DateOnly.FromDateTime(nowLocal.DateTime);
 
-        if (!IsBusinessDay(todayLocal))
+        if (!_disableBusinessDayGuard && !IsBusinessDay(todayLocal))
         {
             return Outcome(ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY, 0, null, 0, 0, deadlineSeconds);
         }
 
-        if (!HasPassed20h(nowLocal, todayLocal))
+        if (!_disable20hGuard && !HasPassed20h(nowLocal, todayLocal))
         {
             return Outcome(ReasonStop.EARLY_EXIT_BEFORE_20H, 0, null, 0, 0, deadlineSeconds);
         }

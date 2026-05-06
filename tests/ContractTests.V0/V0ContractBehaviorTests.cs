@@ -45,6 +45,130 @@ public sealed class V0ContractBehaviorTests
     }
 
     [Fact]
+    public async Task DisableBusinessDayGuard_true_weekend_after_20h_does_not_early_exit_not_business_day()
+    {
+        // Domingo 20:30 em São Paulo => 23:30Z.
+        var clock = new FakeClock(Utc("2026-04-26T23:30:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 10);
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-20"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-20", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(
+            api,
+            blob,
+            state,
+            clock,
+            delay,
+            disableBusinessDayGuard: true,
+            disable20hGuard: false,
+            CancellationToken.None);
+
+        Assert.Contains(api.Calls, c => c == "GetLatest:lotofacil");
+    }
+
+    [Fact]
+    public async Task Disable20hGuard_true_business_day_before_20h_does_not_early_exit_before_20h()
+    {
+        // Segunda-feira 19:00 em São Paulo ~ 22:00Z.
+        var clock = new FakeClock(Utc("2026-04-27T22:00:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 10);
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-20"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-20", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(
+            api,
+            blob,
+            state,
+            clock,
+            delay,
+            disableBusinessDayGuard: false,
+            disable20hGuard: true,
+            CancellationToken.None);
+
+        Assert.Contains(api.Calls, c => c == "GetLatest:lotofacil");
+    }
+
+    [Fact]
+    public async Task Toggles_are_independent_disable_business_day_only_still_stops_before_20h()
+    {
+        // Domingo 19:00 em São Paulo => 22:00Z.
+        var clock = new FakeClock(Utc("2026-04-26T22:00:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 10);
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-20"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-20", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(
+            api,
+            blob,
+            state,
+            clock,
+            delay,
+            disableBusinessDayGuard: true,
+            disable20hGuard: false,
+            CancellationToken.None);
+
+        Assert.Empty(api.Calls);
+        Assert.Empty(blob.Events);
+        Assert.Empty(state.Events);
+    }
+
+    [Fact]
+    public async Task Toggles_are_independent_disable_20h_only_still_stops_on_weekend()
+    {
+        // Domingo 20:30 em São Paulo => 23:30Z.
+        var clock = new FakeClock(Utc("2026-04-26T23:30:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 10);
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-20"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-20", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(
+            api,
+            blob,
+            state,
+            clock,
+            delay,
+            disableBusinessDayGuard: false,
+            disable20hGuard: true,
+            CancellationToken.None);
+
+        Assert.Empty(api.Calls);
+        Assert.Empty(blob.Events);
+        Assert.Empty(state.Events);
+    }
+
+    [Fact]
+    public async Task Toggles_combined_both_true_allows_weekend_before_20h()
+    {
+        // Domingo 19:00 em São Paulo => 22:00Z.
+        var clock = new FakeClock(Utc("2026-04-26T22:00:00Z"));
+        var delay = new FakeDelay(clock);
+        var api = new FakeApi(latestId: 10);
+        var seq = new EventSequencer();
+        var blob = new InMemoryBlobStore(seq, existing: BlobWithOneDraw(5, "2026-04-20"));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, "2026-04-20", clock.UtcNow, null));
+
+        await EntryPoint.RunAsync(
+            api,
+            blob,
+            state,
+            clock,
+            delay,
+            disableBusinessDayGuard: true,
+            disable20hGuard: true,
+            CancellationToken.None);
+
+        Assert.Contains(api.Calls, c => c == "GetLatest:lotofacil");
+    }
+
+    [Fact]
     public async Task EarlyExit_already_loaded_today_after_20h_does_not_call_api()
     {
         // Segunda-feira 20:30 em São Paulo => 23:30Z.
