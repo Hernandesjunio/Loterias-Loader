@@ -2,6 +2,7 @@ using Lotofacil.Loader.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 
 namespace Lotofacil.Loader.Infrastructure;
 
@@ -92,6 +93,8 @@ public static class ServiceCollectionExtensions
         string lotteryApiSegment,
         ILoteriaBlobCatalog catalog) =>
         new(
+            sp.GetRequiredService<ILogger<LoteriaResultsUpdateUseCase>>(),
+            sp.GetRequiredService<IRunContext>(),
             sp.GetRequiredService<IClock>(),
             sp.GetRequiredService<IDelay>(),
             sp.GetRequiredService<ILotteriesApiClient>(),

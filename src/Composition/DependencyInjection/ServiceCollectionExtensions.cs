@@ -9,6 +9,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IDelay, SystemDelay>();
+        services.AddSingleton<IRunContext, AsyncLocalRunContext>();
         return services;
     }
 

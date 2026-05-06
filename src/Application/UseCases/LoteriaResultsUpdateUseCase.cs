@@ -1,11 +1,15 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Text.Json;
 using Lotofacil.Loader.Domain;
+using Microsoft.Extensions.Logging;
 
 namespace Lotofacil.Loader.Application;
 
 public sealed class LoteriaResultsUpdateUseCase
 {
+    private readonly ILogger<LoteriaResultsUpdateUseCase> _log;
+    private readonly IRunContext _runContext;
     private readonly IClock _clock;
     private readonly IDelay _delay;
     private readonly ILotteriesApiClient _api;
@@ -18,6 +22,8 @@ public sealed class LoteriaResultsUpdateUseCase
     private readonly string _lotteryApiSegment;
 
     public LoteriaResultsUpdateUseCase(
+        ILogger<LoteriaResultsUpdateUseCase> log,
+        IRunContext runContext,
         IClock clock,
         IDelay delay,
         ILotteriesApiClient api,
@@ -29,6 +35,8 @@ public sealed class LoteriaResultsUpdateUseCase
         string modalityKey,
         string lotteryApiSegment)
     {
+        _log = log;
+        _runContext = runContext;
         _clock = clock;
         _delay = delay;
         _api = api;
@@ -45,6 +53,8 @@ public sealed class LoteriaResultsUpdateUseCase
 
     public async Task<UpdateLoteriaResultsOutcome> ExecuteAsync(CancellationToken ct)
     {
+        var startUtc = _clock.UtcNow;
+        var startTimestamp = Stopwatch.GetTimestamp();
         var nowUtc = _clock.UtcNow;
         const int deadlineSeconds = 180;
         var deadlineUtc = nowUtc.AddSeconds(deadlineSeconds);
@@ -52,58 +62,108 @@ public sealed class LoteriaResultsUpdateUseCase
         var nowLocal = ConvertToSaoPaulo(nowUtc);
         var todayLocal = DateOnly.FromDateTime(nowLocal.DateTime);
 
+        var ctx = _runContext.Current;
+        using var activity = StartRootActivity(ctx, deadlineSeconds);
+        using var scope = _log.BeginScope(new Dictionary<string, object?>
+        {
+            ["run_id"] = ctx?.RunId,
+            ["modality"] = _modalityKey,
+            ["trace_id"] = Activity.Current?.TraceId.ToString(),
+            ["deadline_seconds"] = deadlineSeconds,
+            ["timezone"] = "America/Sao_Paulo",
+            ["disable_business_day_guard"] = _disableBusinessDayGuard,
+            ["disable_20h_guard"] = _disable20hGuard
+        });
+
+        _log.LogDebug(
+            "update_results.start now_utc={now_utc} deadline_utc={deadline_utc} today_local={today_local}",
+            nowUtc,
+            deadlineUtc,
+            todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+
+        EmitEvent("guards.evaluate", new ActivityTagsCollection
+        {
+            ["is_business_day"] = IsBusinessDay(todayLocal),
+            ["has_passed_20h"] = HasPassed20h(nowLocal, todayLocal),
+            ["guard_business_day_enabled"] = !_disableBusinessDayGuard,
+            ["guard_20h_enabled"] = !_disable20hGuard
+        });
+
         if (!_disableBusinessDayGuard && !IsBusinessDay(todayLocal))
         {
-            return Outcome(ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY, 0, null, 0, 0, deadlineSeconds);
+            _log.LogDebug("guards.early_exit reason_stop={reason_stop}", ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY);
+            return FinalizeAndReturn(Outcome(ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY, 0, null, 0, 0, deadlineSeconds), startUtc, startTimestamp);
         }
 
         if (!_disable20hGuard && !HasPassed20h(nowLocal, todayLocal))
         {
-            return Outcome(ReasonStop.EARLY_EXIT_BEFORE_20H, 0, null, 0, 0, deadlineSeconds);
+            _log.LogDebug("guards.early_exit reason_stop={reason_stop}", ReasonStop.EARLY_EXIT_BEFORE_20H);
+            return FinalizeAndReturn(Outcome(ReasonStop.EARLY_EXIT_BEFORE_20H, 0, null, 0, 0, deadlineSeconds), startUtc, startTimestamp);
         }
 
+        _log.LogDebug("state.read.start");
+        EmitEvent("state.read.start");
         var state = await ReadOrInitializeStateAsync(deadlineUtc, ct);
+        EmitEvent("state.read.ok");
+        _log.LogDebug(
+            "state.read.ok last_loaded_contest_id={last_loaded_contest_id} last_loaded_draw_date={last_loaded_draw_date}",
+            state.LastLoadedContestId,
+            state.LastLoadedDrawDate);
 
         if (state.LastLoadedDrawDate is not null &&
             string.Equals(state.LastLoadedDrawDate, todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal))
         {
-            return Outcome(
+            _log.LogDebug("guards.early_exit reason_stop={reason_stop} last_loaded_draw_date={last_loaded_draw_date}", ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY, state.LastLoadedDrawDate);
+            return FinalizeAndReturn(Outcome(
                 ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY,
                 state.LastLoadedContestId,
                 null,
                 0,
                 state.LastLoadedContestId,
-                deadlineSeconds);
+                deadlineSeconds), startUtc, startTimestamp);
         }
 
         if (!HasMinimumBudget(deadlineUtc))
         {
-            return Outcome(
+            _log.LogDebug("budget.insufficient reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
+            return FinalizeAndReturn(Outcome(
                 ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
                 state.LastLoadedContestId,
                 null,
                 0,
                 state.LastLoadedContestId,
-                deadlineSeconds);
+                deadlineSeconds), startUtc, startTimestamp);
         }
 
+        _log.LogDebug("blob.read.start");
+        EmitEvent("blob.read.start");
         var doc = await ReadBlobDocumentAsync(ct);
+        EmitEvent("blob.read.ok");
         var drawsById = ToDrawMap(doc);
         if (drawsById.Count == 0)
         {
-            return await ExecuteBootstrapAsync(state, deadlineSeconds, ct);
+            _log.LogDebug("bootstrap.required draws_count=0");
+            return FinalizeAndReturn(await ExecuteBootstrapAsync(state, deadlineSeconds, ct), startUtc, startTimestamp);
         }
 
+        _log.LogDebug("latestId.fetch.start");
+        EmitEvent("latestId.fetch.start");
         var latestId = await _api.GetLatestContestIdAsync(_lotteryApiSegment, ct);
+        EmitEvent("latestId.fetch.ok", new ActivityTagsCollection { ["latest_id"] = latestId });
+        _log.LogDebug("latestId.fetch.ok latest_id={latest_id}", latestId);
         if (latestId <= state.LastLoadedContestId)
         {
-            return Outcome(
+            _log.LogDebug("aligned.early_exit reason_stop={reason_stop} latest_id={latest_id} last_loaded_contest_id={last_loaded_contest_id}",
+                ReasonStop.EARLY_EXIT_ALREADY_ALIGNED,
+                latestId,
+                state.LastLoadedContestId);
+            return FinalizeAndReturn(Outcome(
                 ReasonStop.EARLY_EXIT_ALREADY_ALIGNED,
                 state.LastLoadedContestId,
                 latestId,
                 0,
                 state.LastLoadedContestId,
-                deadlineSeconds);
+                deadlineSeconds), startUtc, startTimestamp);
         }
 
         var nextId = state.LastLoadedContestId + 1;
@@ -113,10 +173,14 @@ public sealed class LoteriaResultsUpdateUseCase
         DateTimeOffset? lastRequestStartUtc = null;
         var processedCount = 0;
 
+        _log.LogDebug("incremental.loop.start next_id={next_id} latest_id={latest_id}", nextId, latestId);
+        EmitEvent("incremental.loop.start", new ActivityTagsCollection { ["next_id"] = nextId, ["latest_id"] = latestId });
+
         for (var id = nextId; id <= latestId; id++)
         {
             if (!HasMinimumBudget(deadlineUtc))
             {
+                _log.LogDebug("budget.insufficient_in_loop next_id={next_id} current_id={current_id}", nextId, id);
                 break;
             }
 
@@ -128,9 +192,12 @@ public sealed class LoteriaResultsUpdateUseCase
                 {
                     if (_clock.UtcNow.Add(wait) >= deadlineUtc)
                     {
+                        _log.LogDebug("pacing.wait_skipped_window_expiring wait_seconds={wait_seconds}", wait.TotalSeconds);
                         break;
                     }
 
+                    _runContext.AddWaitSeconds(wait.TotalSeconds);
+                    _log.LogDebug("pacing.wait start wait_seconds={wait_seconds}", wait.TotalSeconds);
                     await _delay.DelayAsync(wait, ct);
                 }
             }
@@ -140,11 +207,14 @@ public sealed class LoteriaResultsUpdateUseCase
             object draw;
             try
             {
+                EmitEvent("incremental.id.start", new ActivityTagsCollection { ["contest_id"] = id });
                 var raw = await _api.GetContestByIdRawAsync(_lotteryApiSegment, id, ct);
                 draw = _catalog.ParseContestToDraw(raw);
+                EmitEvent("incremental.id.ok", new ActivityTagsCollection { ["contest_id"] = id });
             }
             catch
             {
+                _log.LogDebug("incremental.id.failed_stop contest_id={contest_id}", id);
                 break;
             }
 
@@ -156,18 +226,22 @@ public sealed class LoteriaResultsUpdateUseCase
 
         if (lastPersistableId == state.LastLoadedContestId)
         {
-            return Outcome(
+            _log.LogDebug("stop.no_progress reason_stop={reason_stop} processed_count={processed_count}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED, processedCount);
+            return FinalizeAndReturn(Outcome(
                 ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
                 state.LastLoadedContestId,
                 latestId,
                 processedCount,
                 state.LastLoadedContestId,
-                deadlineSeconds);
+                deadlineSeconds), startUtc, startTimestamp);
         }
 
         var newDoc = _catalog.MergeOrderedDraws(drawsById);
 
+        _log.LogDebug("persist.blob.start persisted_last_id={persisted_last_id}", lastPersistableId);
+        EmitEvent("persist.blob.start");
         await _blob.WriteRawAsync(newDoc, ct);
+        EmitEvent("persist.blob.ok");
 
         var newState = state with
         {
@@ -176,9 +250,12 @@ public sealed class LoteriaResultsUpdateUseCase
             LastUpdatedAtUtc = _clock.UtcNow
         };
 
+        _log.LogDebug("persist.state.start persisted_last_id={persisted_last_id}", lastPersistableId);
+        EmitEvent("persist.state.start");
         await _state.WriteRawAsync(newState, ct);
+        EmitEvent("persist.state.ok");
 
-        return new UpdateLoteriaResultsOutcome(
+        return FinalizeAndReturn(new UpdateLoteriaResultsOutcome(
             ModalityKey: _modalityKey,
             ReasonStop: ReasonStop.COMPLETED_SUCCESS,
             LastLoadedContestId: state.LastLoadedContestId,
@@ -187,7 +264,64 @@ public sealed class LoteriaResultsUpdateUseCase
             PersistedLastId: lastPersistableId,
             DeadlineSeconds: deadlineSeconds,
             Timezone: "America/Sao_Paulo"
-        );
+        ), startUtc, startTimestamp);
+    }
+
+    private UpdateLoteriaResultsOutcome FinalizeAndReturn(UpdateLoteriaResultsOutcome outcome, DateTimeOffset startUtc, long startTimestamp)
+    {
+        var elapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
+        var ctx = _runContext.Current;
+
+        Activity.Current?.SetTag("reason_stop", outcome.ReasonStop.ToString());
+        Activity.Current?.SetTag("last_loaded_contest_id", outcome.LastLoadedContestId);
+        Activity.Current?.SetTag("latest_id", outcome.LatestId);
+        Activity.Current?.SetTag("processed_count", outcome.ProcessedCount);
+        Activity.Current?.SetTag("persisted_last_id", outcome.PersistedLastId);
+        Activity.Current?.SetTag("retries_count", ctx?.RetriesCount ?? 0);
+        Activity.Current?.SetTag("rate_limit_wait_seconds_total", ctx?.RateLimitWaitSecondsTotal ?? 0d);
+        Activity.Current?.SetTag("elapsed_seconds", elapsedSeconds);
+        EmitEvent("stop", new ActivityTagsCollection { ["reason_stop"] = outcome.ReasonStop.ToString() });
+
+        _log.LogDebug(
+            "update_results.stop reason_stop={reason_stop} last_loaded_contest_id={last_loaded_contest_id} latest_id={latest_id} processed_count={processed_count} persisted_last_id={persisted_last_id} retries_count={retries_count} rate_limit_wait_seconds_total={rate_limit_wait_seconds_total} elapsed_seconds={elapsed_seconds}",
+            outcome.ReasonStop,
+            outcome.LastLoadedContestId,
+            outcome.LatestId,
+            outcome.ProcessedCount,
+            outcome.PersistedLastId,
+            ctx?.RetriesCount ?? 0,
+            ctx?.RateLimitWaitSecondsTotal ?? 0d,
+            elapsedSeconds);
+
+        return outcome;
+    }
+
+    private Activity? StartRootActivity(RunContextSnapshot? ctx, int deadlineSeconds)
+    {
+        var a = LotofacilLoaderActivitySource.Instance.StartActivity("LotofacilLoader.UpdateResults", ActivityKind.Internal);
+        if (a is null)
+        {
+            return null;
+        }
+
+        a.SetTag("run_id", ctx?.RunId);
+        a.SetTag("modality", _modalityKey);
+        a.SetTag("timezone", "America/Sao_Paulo");
+        a.SetTag("deadline_seconds", deadlineSeconds);
+        a.SetTag("disable_business_day_guard", _disableBusinessDayGuard);
+        a.SetTag("disable_20h_guard", _disable20hGuard);
+        return a;
+    }
+
+    private static void EmitEvent(string name, ActivityTagsCollection? tags = null)
+    {
+        var a = Activity.Current;
+        if (a is null)
+        {
+            return;
+        }
+
+        a.AddEvent(new ActivityEvent(name, tags: tags));
     }
 
     private UpdateLoteriaResultsOutcome Outcome(
@@ -308,6 +442,8 @@ public sealed class LoteriaResultsUpdateUseCase
         int deadlineSeconds,
         CancellationToken ct)
     {
+        _log.LogDebug("bootstrap.start");
+        EmitEvent("bootstrap.start");
         var rawAll = await _api.GetAllResultsRawAsync(_lotteryApiSegment, ct);
         var drawsById = new Dictionary<int, object>();
         foreach (var rawContest in EnumerateBulkContests(rawAll))
@@ -317,7 +453,10 @@ public sealed class LoteriaResultsUpdateUseCase
         }
 
         var bootstrapDoc = _catalog.MergeOrderedDraws(drawsById);
+        _log.LogDebug("persist.blob.start bootstrap=true processed_count={processed_count}", drawsById.Count);
+        EmitEvent("persist.blob.start", new ActivityTagsCollection { ["bootstrap"] = true });
         await _blob.WriteRawAsync(bootstrapDoc, ct);
+        EmitEvent("persist.blob.ok");
 
         var maxContestId = drawsById.Count == 0 ? 0 : drawsById.Keys.Max();
         string? maxDrawDate = null;
@@ -333,7 +472,12 @@ public sealed class LoteriaResultsUpdateUseCase
             LastUpdatedAtUtc = _clock.UtcNow
         };
 
+        _log.LogDebug("persist.state.start bootstrap=true persisted_last_id={persisted_last_id}", maxContestId);
+        EmitEvent("persist.state.start", new ActivityTagsCollection { ["bootstrap"] = true });
         await _state.WriteRawAsync(bootstrapState, ct);
+        EmitEvent("persist.state.ok");
+        _log.LogDebug("bootstrap.ok persisted_last_id={persisted_last_id}", maxContestId);
+        EmitEvent("bootstrap.ok");
 
         return new UpdateLoteriaResultsOutcome(
             ModalityKey: _modalityKey,

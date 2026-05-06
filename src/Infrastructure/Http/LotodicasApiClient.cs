@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Lotofacil.Loader.Application;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace Lotofacil.Loader.Infrastructure;
 
@@ -15,11 +17,19 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
 
     private readonly HttpClient _http;
     private readonly LotodicasOptions _options;
+    private readonly ILogger<LotodicasApiClient> _log;
+    private readonly IRunContext _runContext;
 
-    public LotodicasApiClient(HttpClient http, IOptions<LotodicasOptions> options)
+    public LotodicasApiClient(
+        HttpClient http,
+        IOptions<LotodicasOptions> options,
+        ILogger<LotodicasApiClient> log,
+        IRunContext runContext)
     {
         _http = http;
         _options = options.Value;
+        _log = log;
+        _runContext = runContext;
     }
 
     public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct) =>
@@ -65,18 +75,64 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
             HttpResponseMessage? resp = null;
             try
             {
+                _log.LogDebug("http.request.start attempt={attempt} max_attempts={max_attempts} timeout_seconds={timeout_seconds} path={path}",
+                    attempt, maxAttempts, 10, SanitizePath(relativePath));
+                Activity.Current?.AddEvent(new ActivityEvent(
+                    "http.request.start",
+                    tags: new ActivityTagsCollection
+                    {
+                        ["attempt"] = attempt,
+                        ["max_attempts"] = maxAttempts,
+                        ["timeout_seconds"] = 10,
+                        ["path"] = SanitizePath(relativePath)
+                    }));
+
                 resp = await _http.GetAsync(relativePath, attemptCts.Token);
+
+                _log.LogDebug("http.response status_code={status_code} attempt={attempt} path={path}",
+                    (int)resp.StatusCode, attempt, SanitizePath(relativePath));
+                Activity.Current?.AddEvent(new ActivityEvent(
+                    "http.response",
+                    tags: new ActivityTagsCollection
+                    {
+                        ["status_code"] = (int)resp.StatusCode,
+                        ["attempt"] = attempt,
+                        ["path"] = SanitizePath(relativePath)
+                    }));
 
                 if (resp.StatusCode == HttpStatusCode.TooManyRequests && attempt < maxAttempts)
                 {
                     var delay = TryGetRetryAfter(resp) ?? TimeSpan.FromSeconds(30);
+                    _runContext.IncrementRetries();
+                    _runContext.AddWaitSeconds(delay.TotalSeconds);
+                    _log.LogDebug("http.retry_scheduled reason=429 retry_after_seconds={retry_after_seconds} attempt={attempt}", delay.TotalSeconds, attempt);
+                    Activity.Current?.AddEvent(new ActivityEvent(
+                        "http.retry_scheduled",
+                        tags: new ActivityTagsCollection
+                        {
+                            ["reason"] = "429",
+                            ["retry_after_seconds"] = delay.TotalSeconds,
+                            ["attempt"] = attempt
+                        }));
                     await Task.Delay(delay, ct);
                     continue;
                 }
 
                 if ((int)resp.StatusCode >= 500 && attempt < maxAttempts)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                    var delay = TimeSpan.FromSeconds(30);
+                    _runContext.IncrementRetries();
+                    _runContext.AddWaitSeconds(delay.TotalSeconds);
+                    _log.LogDebug("http.retry_scheduled reason=5xx retry_after_seconds={retry_after_seconds} attempt={attempt}", delay.TotalSeconds, attempt);
+                    Activity.Current?.AddEvent(new ActivityEvent(
+                        "http.retry_scheduled",
+                        tags: new ActivityTagsCollection
+                        {
+                            ["reason"] = "5xx",
+                            ["retry_after_seconds"] = delay.TotalSeconds,
+                            ["attempt"] = attempt
+                        }));
+                    await Task.Delay(delay, ct);
                     continue;
                 }
 
@@ -87,7 +143,19 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && attempt < maxAttempts)
             {
-                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                var delay = TimeSpan.FromSeconds(30);
+                _runContext.IncrementRetries();
+                _runContext.AddWaitSeconds(delay.TotalSeconds);
+                _log.LogDebug("http.retry_scheduled reason=timeout retry_after_seconds={retry_after_seconds} attempt={attempt}", delay.TotalSeconds, attempt);
+                Activity.Current?.AddEvent(new ActivityEvent(
+                    "http.retry_scheduled",
+                    tags: new ActivityTagsCollection
+                    {
+                        ["reason"] = "timeout",
+                        ["retry_after_seconds"] = delay.TotalSeconds,
+                        ["attempt"] = attempt
+                    }));
+                await Task.Delay(delay, ct);
                 continue;
             }
             finally
@@ -97,6 +165,21 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
         }
 
         throw new InvalidOperationException("HTTP resilience loop exhausted unexpectedly.");
+    }
+
+    private static string SanitizePath(string relativePath)
+    {
+        var i = relativePath.IndexOf("token=", StringComparison.OrdinalIgnoreCase);
+        if (i < 0)
+        {
+            return relativePath;
+        }
+
+        var start = i + "token=".Length;
+        var end = relativePath.IndexOf('&', start);
+        return end < 0
+            ? relativePath[..start] + "***"
+            : relativePath[..start] + "***" + relativePath[end..];
     }
 
     private static TimeSpan? TryGetRetryAfter(HttpResponseMessage resp)
