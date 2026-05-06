@@ -138,6 +138,51 @@ Critério de pronto:
 - docs atualizadas e testes provam os quatro cenários mínimos.
 ```
 
+## Fase incremental — Observabilidade (logs Debug estruturados + tracing)
+
+```md
+Implemente apenas a fatia “observabilidade (logs Debug estruturados + tracing)”:
+- adicionar logs **Debug** em cada ponto com ação/decisão relevante no fluxo de atualização (use case, HTTP e superfície pública);
+- adicionar **traces** por execução/modality usando `Activity`/`ActivitySource`, com tags/events normativos;
+- garantir correlação por `run_id` e `trace_id` (quando habilitado), sem alterar semântica/contrato do loader.
+
+Fatia do spec que estou materializando:
+- docs/spec-driven-execution-guide.md
+  - seção 14 (Observabilidade — campos mínimos e `reason_stop`)
+- docs/adrs/0002-observabilidade-logs-debug-e-tracing.md (decisão)
+- docs/observability.md (detalhes técnicos normativos: activities, tags, events, testes, config)
+- docs/brief.md (seção “Observabilidade (logs e traces)”)
+
+Plano de teste (prova):
+- adicionar testes unitários para provar, sem exporter:
+  - existe Activity `LotofacilLoader.UpdateResults` via `ActivitySource` `Lotofacil.Loader`;
+  - tags mínimas são preenchidas no final (inclui `reason_stop`, `retries_count`, `rate_limit_wait_seconds_total`, `elapsed_seconds`);
+  - eventos mínimos existem (`guards.evaluate`, `stop`);
+  - logs Debug são emitidos nos marcos principais (ex.: avaliação de guards e stop).
+
+Arquivos que podem ser alterados (mínimo possível):
+- docs/brief.md (seção Observabilidade; referências)
+- docs/spec-driven-execution-guide.md (somente para referenciar ADR/guia técnico, sem mudar contrato)
+- docs/fases-execucao-templates.md (este template)
+- docs/adrs/0002-observabilidade-logs-debug-e-tracing.md (se precisar ajustes de decisão)
+- docs/observability.md (se precisar ajuste técnico normativo)
+- tests/** (novos testes unitários de observabilidade)
+- src/Application/** (instrumentação no caso de uso: `ILogger` + Activity events/tags)
+- src/Infrastructure/Http/** (instrumentação no HTTP client: tentativas/status/retry)
+- src/FunctionApp/** (instrumentação no trigger e wiring para export opcional)
+
+Restrições:
+- sem mudança de semântica/contrato: `reason_stop` permanece o motivo oficial de parada;
+- sem segredos em logs (não logar token, connection string, etc.);
+- controle de verbosidade via `Logging__LogLevel__...` (padrão .NET), sem toggle adicional;
+- evitar excesso de volume: permitir amostragem de logs Debug no loop incremental (ver `docs/observability.md`).
+
+Critério de pronto:
+- docs + testes + código alinhados;
+- é possível reconstruir o passo-a-passo de uma execução em produção com `run_id` + `trace_id`;
+- testes unitários provam que tracing/logging básicos existem e carregam campos normativos.
+```
+
 ## Fase 2 — Fixtures + goldens determinísticos (V0)
 
 ```md

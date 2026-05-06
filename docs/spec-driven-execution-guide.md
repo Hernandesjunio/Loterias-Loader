@@ -310,6 +310,10 @@ Após obter `latestId` pelo endpoint “último”:
 
 A execução deve emitir logs estruturados suficientes para explicar **por que parou** e **o que (não) fez**. Todo encerramento (inclusive antecipado) deve registrar um motivo.
 
+- Detalhamento normativo (padrão de logs Debug estruturados + tracing por `Activity`/`ActivitySource`):
+  - decisão: `docs/adrs/0002-observabilidade-logs-debug-e-tracing.md`
+  - guia técnico: `docs/observability.md`
+
 - **Campos mínimos recomendados em logs**:
   - `run_id` (correlação por execução), `deadline_seconds=180`, `timezone=America/Sao_Paulo`
   - `disable_business_day_guard`, `disable_20h_guard` (valores efetivos das feature toggles de calendário)
