@@ -181,6 +181,34 @@ O `host.json` já habilita Application Insights com sampling. Para controle de n
 
 Normativo: **o repositório não deve depender de um valor hardcoded**; o nível vem do ambiente.
 
+### Azure Functions `dotnet-isolated`: habilitar Debug no terminal (worker + host)
+
+Em Azure Functions **`dotnet-isolated`**, existem dois componentes relevantes:
+
+- **Host (Functions runtime/Core Tools)**: aplica filtros para categorias como `Function` (ex.: pode travar em `Information`).
+- **Worker (.NET isolated)**: é o processo .NET onde roda o seu código e onde o `ILogger<T>` é emitido.
+
+Normativo (para desenvolvimento local): para garantir que logs `Debug` do seu código apareçam no terminal, o **worker** deve:
+
+- ter um **console logger provider**; e
+- aplicar a seção `Logging` da configuração (.NET) no pipeline de logging.
+
+Exemplo canônico (worker), a ser colocado no `Program.cs` da FunctionApp:
+
+```csharp
+.ConfigureLogging((loggingContext, loggingBuilder) =>
+{
+    loggingBuilder.AddJsonConsole(consoleOptions =>
+    {
+        consoleOptions.IncludeScopes = true;
+    });
+
+    loggingBuilder.AddConfiguration(loggingContext.Configuration.GetSection("Logging"));
+})
+```
+
+E o nível deve ser controlado **via ambiente** (ex.: `Logging__LogLevel__Lotofacil.Loader=Debug`).
+
 ### Volume e amostragem (guideline)
 
 - Logs Debug podem ser muito verbosos no loop incremental. Estratégias permitidas:
