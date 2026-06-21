@@ -13,21 +13,22 @@ public sealed class ObservabilityTests
     [Fact]
     public async Task Tracing_creates_root_activity_with_minimum_tags_and_events_and_debug_logs()
     {
-        var clock = new FakeClock(Utc("2026-04-26T23:00:00Z")); // Domingo
+        var clock = new FakeClock(ContractTestHarness.Utc("2026-04-26T23:00:00Z")); // Domingo 20:00 SP
         var delay = new FakeDelay(clock);
         var api = new FakeApi(latestId: 10);
         var seq = new EventSequencer();
-        var blob = new InMemoryBlobStore(seq);
-        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(123, "2026-04-26", clock.UtcNow, null));
+        var blob = new InMemoryBlobStore(seq, ContractTestHarness.BlobWithDraws((123, "2026-04-26")));
+        var state = new InMemoryStateStore(seq, new LoteriaLoaderState(123, "2026-04-26", clock.UtcNow, null));
 
         var started = new List<Activity>();
         var stopped = new List<Activity>();
+        var activitySync = new object();
         using var listener = new ActivityListener
         {
             ShouldListenTo = s => s.Name == LotofacilLoaderActivitySource.Name,
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStarted = a => started.Add(a),
-            ActivityStopped = a => stopped.Add(a)
+            ActivityStarted = a => { lock (activitySync) { started.Add(a); } },
+            ActivityStopped = a => { lock (activitySync) { stopped.Add(a); } }
         };
         ActivitySource.AddActivityListener(listener);
 
@@ -65,7 +66,16 @@ public sealed class ObservabilityTests
             _ = await sp.GetRequiredService<LoteriaResultsUpdateUseCase>().ExecuteAsync(CancellationToken.None);
         }
 
-        var root = Assert.Single(stopped, a => a.OperationName == "LotofacilLoader.UpdateResults");
+        List<Activity> stoppedSnapshot;
+        lock (activitySync)
+        {
+            stoppedSnapshot = stopped.ToList();
+        }
+
+        var root = Assert.Single(
+            stoppedSnapshot,
+            a => a.OperationName == "LotofacilLoader.UpdateResults" &&
+                 string.Equals(a.GetTagItem("run_id") as string, runId, StringComparison.Ordinal));
         Assert.Equal(runId, root.GetTagItem("run_id") as string);
         Assert.Equal(LoteriaModalityKeys.Lotofacil, root.GetTagItem("modality") as string);
 
@@ -83,47 +93,6 @@ public sealed class ObservabilityTests
         Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("state.read.start", StringComparison.Ordinal));
         Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("update_results.stop", StringComparison.Ordinal));
     }
-
-    private static DateTimeOffset Utc(string iso8601Utc) =>
-        DateTimeOffset.Parse(iso8601Utc, null, System.Globalization.DateTimeStyles.AssumeUniversal);
-
-    private sealed class FakeClock : IClock
-    {
-        public FakeClock(DateTimeOffset utcNow) => UtcNow = utcNow;
-        public DateTimeOffset UtcNow { get; private set; }
-    }
-
-    private sealed class FakeDelay : IDelay
-    {
-        public FakeDelay(FakeClock clock) { }
-        public Task DelayAsync(TimeSpan delay, CancellationToken ct) => Task.CompletedTask;
-    }
-
-    private sealed class FakeApi : ILotteriesApiClient
-    {
-        private readonly int _latestId;
-        public FakeApi(int latestId) => _latestId = latestId;
-        public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct) => Task.FromResult(_latestId);
-        public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) => throw new NotSupportedException();
-        public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct) => throw new NotSupportedException();
-    }
-
-    private sealed class InMemoryBlobStore : ILoteriaBlobStore
-    {
-        public InMemoryBlobStore(EventSequencer seq) { }
-        public Task<object?> TryReadRawAsync(CancellationToken ct) => Task.FromResult<object?>(new LotofacilBlobDocument(Array.Empty<LotofacilBlobDraw>()));
-        public Task WriteRawAsync(object document, CancellationToken ct) => Task.CompletedTask;
-    }
-
-    private sealed class InMemoryStateStore : ILoteriaStateStore
-    {
-        private readonly LoteriaLoaderState? _existing;
-        public InMemoryStateStore(EventSequencer seq, LoteriaLoaderState? existing) => _existing = existing;
-        public Task<object?> TryReadRawAsync(CancellationToken ct) => Task.FromResult<object?>(_existing);
-        public Task WriteRawAsync(object state, CancellationToken ct) => Task.CompletedTask;
-    }
-
-    private sealed class EventSequencer { }
 
     private sealed class InMemoryLoggerProvider : ILoggerProvider
     {

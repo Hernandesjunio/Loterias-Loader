@@ -82,19 +82,6 @@ public sealed class LoteriaResultsUpdateUseCase
             state.LastLoadedContestId,
             state.LastLoadedDrawDate);
 
-        if (state.LastLoadedDrawDate is not null &&
-            string.Equals(state.LastLoadedDrawDate, todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal))
-        {
-            _log.LogDebug("guards.early_exit reason_stop={reason_stop} last_loaded_draw_date={last_loaded_draw_date}", ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY, state.LastLoadedDrawDate);
-            return FinalizeAndReturn(Outcome(
-                ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY,
-                state.LastLoadedContestId,
-                null,
-                0,
-                state.LastLoadedContestId,
-                deadlineSeconds), startUtc, startTimestamp);
-        }
-
         if (!HasMinimumBudget(deadlineUtc))
         {
             _log.LogDebug("budget.insufficient reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
@@ -116,6 +103,38 @@ public sealed class LoteriaResultsUpdateUseCase
         {
             _log.LogDebug("bootstrap.required draws_count=0");
             return FinalizeAndReturn(await ExecuteBootstrapAsync(state, deadlineSeconds, ct), startUtc, startTimestamp);
+        }
+
+        var blobMaxContestId = drawsById.Keys.Max();
+        if (state.LastLoadedContestId > blobMaxContestId)
+        {
+            _log.LogDebug(
+                "state.inconsistent reason_stop={reason_stop} table_last_loaded_contest_id={table_last_loaded_contest_id} blob_max_contest_id={blob_max_contest_id}",
+                ReasonStop.HARD_FAIL_STATE_INCONSISTENT_TABLE_GT_BLOB,
+                state.LastLoadedContestId,
+                blobMaxContestId);
+            return FinalizeAndReturn(Outcome(
+                ReasonStop.HARD_FAIL_STATE_INCONSISTENT_TABLE_GT_BLOB,
+                state.LastLoadedContestId,
+                null,
+                0,
+                state.LastLoadedContestId,
+                deadlineSeconds), startUtc, startTimestamp);
+        }
+
+        var todayLocalStr = todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (state.LastLoadedDrawDate is not null &&
+            string.Equals(state.LastLoadedDrawDate, todayLocalStr, StringComparison.Ordinal) &&
+            BlobContainsLoadedDraw(drawsById, state))
+        {
+            _log.LogDebug("guards.early_exit reason_stop={reason_stop} last_loaded_draw_date={last_loaded_draw_date}", ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY, state.LastLoadedDrawDate);
+            return FinalizeAndReturn(Outcome(
+                ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY,
+                state.LastLoadedContestId,
+                null,
+                0,
+                state.LastLoadedContestId,
+                deadlineSeconds), startUtc, startTimestamp);
         }
 
         _log.LogDebug("latestId.fetch.start");
@@ -325,6 +344,24 @@ public sealed class LoteriaResultsUpdateUseCase
 
     private bool HasMinimumBudget(DateTimeOffset deadlineUtc) =>
         deadlineUtc - _clock.UtcNow >= TimeSpan.FromSeconds(15);
+
+    private bool BlobContainsLoadedDraw(IReadOnlyDictionary<int, object> drawsById, LoteriaLoaderState state)
+    {
+        if (state.LastLoadedDrawDate is null)
+        {
+            return false;
+        }
+
+        if (!drawsById.TryGetValue(state.LastLoadedContestId, out var draw))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            _catalog.GetDrawDateFromDraw(draw),
+            state.LastLoadedDrawDate,
+            StringComparison.Ordinal);
+    }
 
     private static DateTimeOffset ConvertToSaoPaulo(DateTimeOffset utcNow)
     {
