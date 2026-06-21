@@ -1,5 +1,7 @@
 <Solution>
-  <Folder Name="/src/" />
+  <Folder Name="/src/">
+    <Project Path="src/FunctionApp/Lotofacil.Loader.FunctionApp.csproj" />
+  </Folder>
   <Folder Name="/src/Application/">
     <Project Path="src/Application/Lotofacil.Loader.Application.csproj" />
   </Folder>

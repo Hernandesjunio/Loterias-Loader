@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
             .Validate(o => !string.IsNullOrWhiteSpace(o.BlobContainer), $"{StorageOptions.SectionName}__BlobContainer é obrigatório")
             .Validate(o => !string.IsNullOrWhiteSpace(o.LotofacilBlobName), $"{StorageOptions.SectionName}__LotofacilBlobName é obrigatório")
             .Validate(o => !string.IsNullOrWhiteSpace(o.MegasenaBlobName), $"{StorageOptions.SectionName}__MegasenaBlobName é obrigatório")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.QuinaBlobName), $"{StorageOptions.SectionName}__QuinaBlobName é obrigatório")
             .Validate(o => !string.IsNullOrWhiteSpace(o.LoteriasStateTable), $"{StorageOptions.SectionName}__LoteriasStateTable é obrigatório");
 
         services.AddHttpClient<LotodicasApiClient>((sp, http) =>
@@ -45,6 +46,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<LotofacilBlobCatalog>();
         services.AddSingleton<MegaSenaBlobCatalog>();
+        services.AddSingleton<QuinaBlobCatalog>();
 
         services.AddKeyedSingleton<ILoteriaBlobStore>(LoteriaModalityKeys.Lotofacil, static (sp, _) =>
         {
@@ -58,6 +60,12 @@ public static class ServiceCollectionExtensions
             return new AzureBlobLoteriaBlobStore(o.ConnectionString, o.BlobContainer, o.MegasenaBlobName);
         });
 
+        services.AddKeyedSingleton<ILoteriaBlobStore>(LoteriaModalityKeys.Quina, static (sp, _) =>
+        {
+            var o = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
+            return new AzureBlobLoteriaBlobStore(o.ConnectionString, o.BlobContainer, o.QuinaBlobName);
+        });
+
         services.AddKeyedSingleton<ILoteriaStateStore>(LoteriaModalityKeys.Lotofacil, static (sp, _) =>
         {
             var o = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
@@ -68,6 +76,12 @@ public static class ServiceCollectionExtensions
         {
             var o = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
             return new AzureTableLoteriaStateStore(o.ConnectionString, o.LoteriasStateTable, LoteriaModalityKeys.MegaSena);
+        });
+
+        services.AddKeyedSingleton<ILoteriaStateStore>(LoteriaModalityKeys.Quina, static (sp, _) =>
+        {
+            var o = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
+            return new AzureTableLoteriaStateStore(o.ConnectionString, o.LoteriasStateTable, LoteriaModalityKeys.Quina);
         });
 
         services.AddKeyedSingleton<LoteriaResultsUpdateUseCase>(LoteriaModalityKeys.Lotofacil, static (sp, _) =>
@@ -83,6 +97,13 @@ public static class ServiceCollectionExtensions
                 modalityKey: LoteriaModalityKeys.MegaSena,
                 lotteryApiSegment: LoteriaModalityKeys.MegaSena,
                 catalog: sp.GetRequiredService<MegaSenaBlobCatalog>()));
+
+        services.AddKeyedSingleton<LoteriaResultsUpdateUseCase>(LoteriaModalityKeys.Quina, static (sp, _) =>
+            CreateUseCase(
+                sp,
+                modalityKey: LoteriaModalityKeys.Quina,
+                lotteryApiSegment: LoteriaModalityKeys.Quina,
+                catalog: sp.GetRequiredService<QuinaBlobCatalog>()));
 
         return services;
     }

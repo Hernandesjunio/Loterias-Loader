@@ -348,6 +348,7 @@ public sealed class LoteriaResultsUpdateUseCase
         {
             LotofacilBlobDocument lf => lf.Draws.ToDictionary(d => d.ContestId, d => (object)d),
             MegaSenaBlobDocument ms => ms.Draws.ToDictionary(d => d.ContestId, d => (object)d),
+            QuinaBlobDocument qn => qn.Draws.ToDictionary(d => d.ContestId, d => (object)d),
             _ => throw new InvalidOperationException("Documento de blob não suportado para este catálogo.")
         };
     }

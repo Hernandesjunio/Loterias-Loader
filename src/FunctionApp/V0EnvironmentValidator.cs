@@ -26,6 +26,7 @@ public sealed class V0EnvironmentValidator
         var container = (_cfg["Storage:BlobContainer"] ?? _cfg["Storage__BlobContainer"])?.Trim();
         var lotofacilBlob = (_cfg["Storage:LotofacilBlobName"] ?? _cfg["Storage__LotofacilBlobName"])?.Trim();
         var megasenaBlob = (_cfg["Storage:MegasenaBlobName"] ?? _cfg["Storage__MegasenaBlobName"])?.Trim();
+        var quinaBlob = (_cfg["Storage:QuinaBlobName"] ?? _cfg["Storage__QuinaBlobName"])?.Trim();
         var tableName = (_cfg["Storage:LoteriasStateTable"] ?? _cfg["Storage__LoteriasStateTable"])?.Trim();
 
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -77,6 +78,11 @@ public sealed class V0EnvironmentValidator
         if (string.IsNullOrWhiteSpace(megasenaBlob) || !BlobNameRegex.IsMatch(megasenaBlob))
         {
             return ValidationResult.Invalid("Storage__MegasenaBlobName é obrigatório e deve ser um nome de blob válido (1–255, letras, números, '.', '_' ou '-')");
+        }
+
+        if (string.IsNullOrWhiteSpace(quinaBlob) || !BlobNameRegex.IsMatch(quinaBlob))
+        {
+            return ValidationResult.Invalid("Storage__QuinaBlobName é obrigatório e deve ser um nome de blob válido (1–255, letras, números, '.', '_' ou '-')");
         }
 
         if (string.IsNullOrWhiteSpace(tableName) || !TableNameRegex.IsMatch(tableName))

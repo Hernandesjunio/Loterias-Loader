@@ -16,6 +16,7 @@ public sealed class LoteriaLoaderTimerFunction
     private readonly IRunContext _runContext;
     private readonly LoteriaResultsUpdateUseCase _lotofacil;
     private readonly LoteriaResultsUpdateUseCase _megaSena;
+    private readonly LoteriaResultsUpdateUseCase _quina;
 
     public LoteriaLoaderTimerFunction(
         ILogger<LoteriaLoaderTimerFunction> log,
@@ -23,7 +24,8 @@ public sealed class LoteriaLoaderTimerFunction
         IOptions<CalendarGuardsTogglesOptions> calendarToggles,
         IRunContext runContext,
         [FromKeyedServices(LoteriaModalityKeys.Lotofacil)] LoteriaResultsUpdateUseCase lotofacil,
-        [FromKeyedServices(LoteriaModalityKeys.MegaSena)] LoteriaResultsUpdateUseCase megaSena)
+        [FromKeyedServices(LoteriaModalityKeys.MegaSena)] LoteriaResultsUpdateUseCase megaSena,
+        [FromKeyedServices(LoteriaModalityKeys.Quina)] LoteriaResultsUpdateUseCase quina)
     {
         _log = log;
         _validator = validator;
@@ -31,6 +33,7 @@ public sealed class LoteriaLoaderTimerFunction
         _runContext = runContext;
         _lotofacil = lotofacil;
         _megaSena = megaSena;
+        _quina = quina;
     }
 
     [Function(nameof(LoteriaLoaderTimerFunction))]
@@ -58,7 +61,7 @@ public sealed class LoteriaLoaderTimerFunction
             return;
         }
 
-        foreach (var useCase in new[] { _lotofacil, _megaSena })
+        foreach (var useCase in new[] { _lotofacil, _megaSena, _quina })
         {
             try
             {

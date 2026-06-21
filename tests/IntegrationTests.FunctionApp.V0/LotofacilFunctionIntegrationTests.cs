@@ -16,7 +16,7 @@ namespace IntegrationTests.FunctionApp.V0;
 public sealed class LotofacilFunctionIntegrationTests
 {
     [SkippableFact]
-    public async Task Full_flow_trigger_runs_lotofacil_and_mega_sena_against_fake_lotodicas_and_persists_blobs_and_table_rows()
+    public async Task Full_flow_trigger_runs_lotofacil_mega_sena_and_quina_against_fake_lotodicas_and_persists_blobs_and_table_rows()
     {
         const string token = "test-token";
 
@@ -30,15 +30,19 @@ public sealed class LotofacilFunctionIntegrationTests
         var containerName = $"loterias-it-{Guid.NewGuid():n}";
         const string lotofacilBlobName = "Lotofacil";
         const string megaBlobName = "MegaSena";
+        const string quinaBlobName = "Quina";
         const string tableName = "LoteriasState";
 
         await using var fake = new LotodicasFakeServer(token)
             .WithLatestResponseJson(LoteriaModalityKeys.Lotofacil, LatestJson(latestId: 7))
             .WithLatestResponseJson(LoteriaModalityKeys.MegaSena, LatestJson(latestId: 7))
+            .WithLatestResponseJson(LoteriaModalityKeys.Quina, LatestJson(latestId: 7))
             .WithContestResponseJson(LoteriaModalityKeys.Lotofacil, 6, ContestJsonLotofacil(id: 6, date: "2026-04-27", winners15: 0))
             .WithContestResponseJson(LoteriaModalityKeys.Lotofacil, 7, ContestJsonLotofacil(id: 7, date: "2026-04-27", winners15: 5))
             .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 6, ContestJsonMegaSena(id: 6, date: "2026-04-27", winners6: 0))
-            .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 7, ContestJsonMegaSena(id: 7, date: "2026-04-27", winners6: 2));
+            .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 7, ContestJsonMegaSena(id: 7, date: "2026-04-27", winners6: 2))
+            .WithContestResponseJson(LoteriaModalityKeys.Quina, 6, ContestJsonQuina(id: 6, date: "2026-04-27", winners5: 0))
+            .WithContestResponseJson(LoteriaModalityKeys.Quina, 7, ContestJsonQuina(id: 7, date: "2026-04-27", winners5: 3));
 
         await fake.StartAsync(CancellationToken.None);
 
@@ -59,6 +63,13 @@ public sealed class LotofacilFunctionIntegrationTests
             ["LastUpdatedAtUtc"] = DateTimeOffset.Parse("2026-04-01T00:00:00Z")
         });
 
+        await table.UpsertEntityAsync(new TableEntity(LoteriaModalityKeys.Quina, "Loader")
+        {
+            ["LastLoadedContestId"] = 5,
+            ["LastLoadedDrawDate"] = "2026-04-01",
+            ["LastUpdatedAtUtc"] = DateTimeOffset.Parse("2026-04-01T00:00:00Z")
+        });
+
         var blobContainer = new BlobContainerClient(storageConn, containerName);
         await blobContainer.CreateIfNotExistsAsync();
 
@@ -67,6 +78,9 @@ public sealed class LotofacilFunctionIntegrationTests
 
         var megaBlob = blobContainer.GetBlobClient(megaBlobName);
         await megaBlob.UploadAsync(BinaryData.FromString(SeedMegaSenaBlobJsonFor5()), overwrite: true);
+
+        var quinaBlob = blobContainer.GetBlobClient(quinaBlobName);
+        await quinaBlob.UploadAsync(BinaryData.FromString(SeedQuinaBlobJsonFor5()), overwrite: true);
 
         var infraCfg = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -77,6 +91,7 @@ public sealed class LotofacilFunctionIntegrationTests
                 ["Storage:BlobContainer"] = containerName,
                 ["Storage:LotofacilBlobName"] = lotofacilBlobName,
                 ["Storage:MegasenaBlobName"] = megaBlobName,
+                ["Storage:QuinaBlobName"] = quinaBlobName,
                 ["Storage:LoteriasStateTable"] = tableName
             })
             .Build();
@@ -90,6 +105,7 @@ public sealed class LotofacilFunctionIntegrationTests
                 ["Storage:BlobContainer"] = containerName,
                 ["Storage:LotofacilBlobName"] = lotofacilBlobName,
                 ["Storage:MegasenaBlobName"] = megaBlobName,
+                ["Storage:QuinaBlobName"] = quinaBlobName,
                 ["Storage:LoteriasStateTable"] = tableName,
                 ["LoteriasLoader__TimerSchedule"] = "0 * * * * *"
             })
@@ -146,6 +162,24 @@ public sealed class LotofacilFunctionIntegrationTests
                 Assert.Equal("GET", c.Method);
                 Assert.Equal("/api/v2/mega_sena/results/7", c.Path);
                 Assert.Equal(token, c.Token);
+            },
+            c =>
+            {
+                Assert.Equal("GET", c.Method);
+                Assert.Equal("/api/v2/quina/results/last", c.Path);
+                Assert.Equal(token, c.Token);
+            },
+            c =>
+            {
+                Assert.Equal("GET", c.Method);
+                Assert.Equal("/api/v2/quina/results/6", c.Path);
+                Assert.Equal(token, c.Token);
+            },
+            c =>
+            {
+                Assert.Equal("GET", c.Method);
+                Assert.Equal("/api/v2/quina/results/7", c.Path);
+                Assert.Equal(token, c.Token);
             }
         );
 
@@ -164,6 +198,14 @@ public sealed class LotofacilFunctionIntegrationTests
         var msState = await table.GetEntityAsync<TableEntity>(LoteriaModalityKeys.MegaSena, "Loader");
         Assert.Equal(7, msState.Value.GetInt32("LastLoadedContestId"));
         Assert.Equal("2026-04-27", msState.Value.GetString("LastLoadedDrawDate"));
+
+        var qnJson = (await quinaBlob.DownloadContentAsync()).Value.Content.ToString();
+        var expectedQn = JsonNode.Parse(ExpectedQuinaBlobJsonFor6And7())!;
+        Assert.True(JsonNode.DeepEquals(expectedQn, JsonNode.Parse(qnJson)!), qnJson);
+
+        var qnState = await table.GetEntityAsync<TableEntity>(LoteriaModalityKeys.Quina, "Loader");
+        Assert.Equal(7, qnState.Value.GetInt32("LastLoadedContestId"));
+        Assert.Equal("2026-04-27", qnState.Value.GetString("LastLoadedDrawDate"));
     }
 
     private static string LatestJson(int latestId) =>
@@ -194,6 +236,21 @@ public sealed class LotofacilFunctionIntegrationTests
                 draw_date = date,
                 drawing = new { draw = new[] { 1, 2, 3, 4, 5, 6 } },
                 prizes = new[] { new { name = "6 acertos", winners = winners6 } }
+            }
+        };
+        return JsonSerializer.Serialize(obj);
+    }
+
+    private static string ContestJsonQuina(int id, string date, int winners5)
+    {
+        var obj = new
+        {
+            data = new
+            {
+                draw_number = id,
+                draw_date = date,
+                drawing = new { draw = new[] { 1, 2, 3, 4, 5 } },
+                prizes = new[] { new { name = "5 acertos", winners = winners5 } }
             }
         };
         return JsonSerializer.Serialize(obj);
@@ -243,6 +300,28 @@ public sealed class LotofacilFunctionIntegrationTests
         }
         """;
 
+    private static string ExpectedQuinaBlobJsonFor6And7() =>
+        """
+        {
+          "draws": [
+            {
+              "contest_id": 6,
+              "draw_date": "2026-04-27",
+              "numbers": [1,2,3,4,5],
+              "winners_5": 0,
+              "has_winner_5": false
+            },
+            {
+              "contest_id": 7,
+              "draw_date": "2026-04-27",
+              "numbers": [1,2,3,4,5],
+              "winners_5": 3,
+              "has_winner_5": true
+            }
+          ]
+        }
+        """;
+
     private static string SeedLotofacilBlobJsonFor5() =>
         """
         {
@@ -268,6 +347,21 @@ public sealed class LotofacilFunctionIntegrationTests
               "numbers": [1,2,3,4,5,6],
               "winners_6": 0,
               "has_winner_6": false
+            }
+          ]
+        }
+        """;
+
+    private static string SeedQuinaBlobJsonFor5() =>
+        """
+        {
+          "draws": [
+            {
+              "contest_id": 5,
+              "draw_date": "2026-04-01",
+              "numbers": [1,2,3,4,5],
+              "winners_5": 0,
+              "has_winner_5": false
             }
           ]
         }

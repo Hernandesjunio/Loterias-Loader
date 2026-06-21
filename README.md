@@ -85,6 +85,26 @@ Sem header, o layout posicional esperado é:
 
 - `Concurso`, `Data Sorteio`, `Bola1..Bola6`, (`Ganhadores 6 acertos` opcional)
 
+#### Quina
+
+```json
+{ "draws": [ { "contest_id": 1, "draw_date": "YYYY-MM-DD", "numbers": [..5..], "winners_5": 0, "has_winner_5": false } ] }
+```
+
+- **Script**: `tools/quina_cef_to_blob.py`
+- **Entrada**: CSV da CEF (geralmente `;` e data `dd/MM/yyyy`)
+- **Saída**: JSON `UTF-8` com `draws` ordenado por `contest_id`
+
+Exemplo (Git Bash / Windows):
+
+```bash
+python tools/quina_cef_to_blob.py --input "C:\caminho\para\quina.csv" --output "C:\caminho\para\Quina.json" --pretty
+```
+
+Sem header, o layout posicional esperado é:
+
+- `Concurso`, `Data Sorteio`, `Bola1..Bola5`, (`Ganhadores 5 acertos` opcional)
+
 ### Subir o JSON no Blob Storage
 
 Depois de gerar o arquivo, carregue-o no seu container configurado em:
