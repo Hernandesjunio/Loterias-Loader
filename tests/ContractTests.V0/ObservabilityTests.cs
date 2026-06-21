@@ -13,12 +13,12 @@ public sealed class ObservabilityTests
     [Fact]
     public async Task Tracing_creates_root_activity_with_minimum_tags_and_events_and_debug_logs()
     {
-        var clock = new FakeClock(Utc("2026-04-26T23:00:00Z")); // Domingo (early-exit not business day)
+        var clock = new FakeClock(Utc("2026-04-26T23:00:00Z")); // Domingo
         var delay = new FakeDelay(clock);
         var api = new FakeApi(latestId: 10);
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq);
-        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(5, null, clock.UtcNow, null));
+        var state = new InMemoryStateStore(seq, existing: new LoteriaLoaderState(123, "2026-04-26", clock.UtcNow, null));
 
         var started = new List<Activity>();
         var stopped = new List<Activity>();
@@ -54,8 +54,6 @@ public sealed class ObservabilityTests
             sp.GetRequiredService<ILoteriaBlobStore>(),
             sp.GetRequiredService<ILoteriaStateStore>(),
             sp.GetRequiredService<ILoteriaBlobCatalog>(),
-            disableBusinessDayGuard: false,
-            disable20hGuard: false,
             modalityKey: LoteriaModalityKeys.Lotofacil,
             lotteryApiSegment: LoteriaModalityKeys.Lotofacil));
 
@@ -73,19 +71,17 @@ public sealed class ObservabilityTests
 
         Assert.Equal("America/Sao_Paulo", root.GetTagItem("timezone") as string);
         Assert.Equal(180, root.GetTagItem("deadline_seconds"));
-        Assert.Equal(false, root.GetTagItem("disable_business_day_guard"));
-        Assert.Equal(false, root.GetTagItem("disable_20h_guard"));
 
-        Assert.Equal(ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY.ToString(), root.GetTagItem("reason_stop") as string);
+        Assert.Equal(ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY.ToString(), root.GetTagItem("reason_stop") as string);
         Assert.NotNull(root.GetTagItem("retries_count"));
         Assert.NotNull(root.GetTagItem("rate_limit_wait_seconds_total"));
         Assert.NotNull(root.GetTagItem("elapsed_seconds"));
 
-        Assert.Contains(root.Events, e => e.Name == "guards.evaluate");
+        Assert.Contains(root.Events, e => e.Name == "state.read.start");
         Assert.Contains(root.Events, e => e.Name == "stop");
 
-        Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("guards.evaluate", StringComparison.OrdinalIgnoreCase) == false);
-        Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("guards.early_exit", StringComparison.Ordinal));
+        Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("state.read.start", StringComparison.Ordinal));
+        Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("update_results.stop", StringComparison.Ordinal));
     }
 
     private static DateTimeOffset Utc(string iso8601Utc) =>
@@ -172,4 +168,3 @@ public sealed class ObservabilityTests
         }
     }
 }
-

@@ -16,8 +16,6 @@ public sealed class LoteriaResultsUpdateUseCase
     private readonly ILoteriaBlobStore _blob;
     private readonly ILoteriaStateStore _state;
     private readonly ILoteriaBlobCatalog _catalog;
-    private readonly bool _disableBusinessDayGuard;
-    private readonly bool _disable20hGuard;
     private readonly string _modalityKey;
     private readonly string _lotteryApiSegment;
 
@@ -30,8 +28,6 @@ public sealed class LoteriaResultsUpdateUseCase
         ILoteriaBlobStore blob,
         ILoteriaStateStore state,
         ILoteriaBlobCatalog catalog,
-        bool disableBusinessDayGuard,
-        bool disable20hGuard,
         string modalityKey,
         string lotteryApiSegment)
     {
@@ -43,8 +39,6 @@ public sealed class LoteriaResultsUpdateUseCase
         _blob = blob;
         _state = state;
         _catalog = catalog;
-        _disableBusinessDayGuard = disableBusinessDayGuard;
-        _disable20hGuard = disable20hGuard;
         _modalityKey = modalityKey;
         _lotteryApiSegment = lotteryApiSegment;
     }
@@ -70,9 +64,7 @@ public sealed class LoteriaResultsUpdateUseCase
             ["modality"] = _modalityKey,
             ["trace_id"] = Activity.Current?.TraceId.ToString(),
             ["deadline_seconds"] = deadlineSeconds,
-            ["timezone"] = "America/Sao_Paulo",
-            ["disable_business_day_guard"] = _disableBusinessDayGuard,
-            ["disable_20h_guard"] = _disable20hGuard
+            ["timezone"] = "America/Sao_Paulo"
         });
 
         _log.LogDebug(
@@ -80,26 +72,6 @@ public sealed class LoteriaResultsUpdateUseCase
             nowUtc,
             deadlineUtc,
             todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-
-        EmitEvent("guards.evaluate", new ActivityTagsCollection
-        {
-            ["is_business_day"] = IsBusinessDay(todayLocal),
-            ["has_passed_20h"] = HasPassed20h(nowLocal, todayLocal),
-            ["guard_business_day_enabled"] = !_disableBusinessDayGuard,
-            ["guard_20h_enabled"] = !_disable20hGuard
-        });
-
-        if (!_disableBusinessDayGuard && !IsBusinessDay(todayLocal))
-        {
-            _log.LogDebug("guards.early_exit reason_stop={reason_stop}", ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY);
-            return FinalizeAndReturn(Outcome(ReasonStop.EARLY_EXIT_NOT_BUSINESS_DAY, 0, null, 0, 0, deadlineSeconds), startUtc, startTimestamp);
-        }
-
-        if (!_disable20hGuard && !HasPassed20h(nowLocal, todayLocal))
-        {
-            _log.LogDebug("guards.early_exit reason_stop={reason_stop}", ReasonStop.EARLY_EXIT_BEFORE_20H);
-            return FinalizeAndReturn(Outcome(ReasonStop.EARLY_EXIT_BEFORE_20H, 0, null, 0, 0, deadlineSeconds), startUtc, startTimestamp);
-        }
 
         _log.LogDebug("state.read.start");
         EmitEvent("state.read.start");
@@ -308,8 +280,6 @@ public sealed class LoteriaResultsUpdateUseCase
         a.SetTag("modality", _modalityKey);
         a.SetTag("timezone", "America/Sao_Paulo");
         a.SetTag("deadline_seconds", deadlineSeconds);
-        a.SetTag("disable_business_day_guard", _disableBusinessDayGuard);
-        a.SetTag("disable_20h_guard", _disable20hGuard);
         return a;
     }
 
@@ -355,18 +325,6 @@ public sealed class LoteriaResultsUpdateUseCase
 
     private bool HasMinimumBudget(DateTimeOffset deadlineUtc) =>
         deadlineUtc - _clock.UtcNow >= TimeSpan.FromSeconds(15);
-
-    private static bool IsBusinessDay(DateOnly date)
-    {
-        var dow = date.DayOfWeek;
-        return dow is not DayOfWeek.Saturday and not DayOfWeek.Sunday;
-    }
-
-    private static bool HasPassed20h(DateTimeOffset nowLocal, DateOnly todayLocal)
-    {
-        var cutoff = todayLocal.ToDateTime(new TimeOnly(20, 0, 0));
-        return nowLocal.DateTime >= cutoff;
-    }
 
     private static DateTimeOffset ConvertToSaoPaulo(DateTimeOffset utcNow)
     {

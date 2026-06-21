@@ -20,15 +20,6 @@ public static class EntryPoint
         ILoteriaBlobStore blob,
         ILoteriaStateStore state,
         CancellationToken ct)
-        => RunAsync(api, blob, state, disableBusinessDayGuard: false, disable20hGuard: false, ct);
-
-    public static Task RunAsync(
-        ILotteriesApiClient api,
-        ILoteriaBlobStore blob,
-        ILoteriaStateStore state,
-        bool disableBusinessDayGuard,
-        bool disable20hGuard,
-        CancellationToken ct)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -46,8 +37,6 @@ public static class EntryPoint
             sp.GetRequiredService<ILoteriaBlobStore>(),
             sp.GetRequiredService<ILoteriaStateStore>(),
             sp.GetRequiredService<LotofacilBlobCatalog>(),
-            disableBusinessDayGuard: disableBusinessDayGuard,
-            disable20hGuard: disable20hGuard,
             modalityKey: LoteriaModalityKeys.Lotofacil,
             lotteryApiSegment: LoteriaModalityKeys.Lotofacil));
 
@@ -62,17 +51,6 @@ public static class EntryPoint
         ILoteriaStateStore state,
         IClock clock,
         IDelay delay,
-        CancellationToken ct)
-        => RunAsync(api, blob, state, clock, delay, disableBusinessDayGuard: false, disable20hGuard: false, ct);
-
-    public static Task RunAsync(
-        ILotteriesApiClient api,
-        ILoteriaBlobStore blob,
-        ILoteriaStateStore state,
-        IClock clock,
-        IDelay delay,
-        bool disableBusinessDayGuard,
-        bool disable20hGuard,
         CancellationToken ct)
     {
         var services = new ServiceCollection();
@@ -93,8 +71,6 @@ public static class EntryPoint
             sp.GetRequiredService<ILoteriaBlobStore>(),
             sp.GetRequiredService<ILoteriaStateStore>(),
             sp.GetRequiredService<LotofacilBlobCatalog>(),
-            disableBusinessDayGuard: disableBusinessDayGuard,
-            disable20hGuard: disable20hGuard,
             modalityKey: LoteriaModalityKeys.Lotofacil,
             lotteryApiSegment: LoteriaModalityKeys.Lotofacil));
 
