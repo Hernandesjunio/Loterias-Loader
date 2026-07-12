@@ -297,6 +297,30 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
     - Blob não é atualizado
     - Table **não** deve ser atualizado para refletir o id como carregado (ordem de persistência garante isso)
 
+### G. Rotação de modalidade por tick (V0.2)
+
+Matriz de testes unitários/contrato (implementados em `tests/ContractTests.V0/`):
+
+| ID | Cenário | Saída esperada |
+|----|---------|----------------|
+| R1 | Round-robin básico (3 acquire+advance) | `lotofacil` → `mega_sena` → `quina` |
+| R2 | Wrap-around (4ª rodada) | retorna `lotofacil` |
+| R3 | Ciclo longo (9 rodadas) | padrão repetido 3×; índice final = 0 |
+| R4 | Scheduler sem row prévia | inicia em `lotofacil`; após advance índice = 1 |
+| R5 | Advance após sucesso | incrementa índice; atualiza `LastModalityKey` e `LastRunUtc` |
+| R6 | Advance após falha | índice incrementa mesmo com exceção no use case |
+| R7 | Ordem configurável | respeita `LoteriasLoader__ModalityOrder` |
+| R8 | Conflito ETag no scheduler | exceção de concorrência; índice não corrompido |
+| R9 | Índice fora de faixa | normaliza via módulo (ex.: 99 → 0) |
+| T1 | Timer em modo rotação | apenas 1 modalidade invocada por tick |
+| T2 | Modalidade selecionada | executa a modalidade do índice atual |
+| T3 | Após tick | scheduler avança índice |
+| T4 | `SequentialAllModalities=true` | 3 modalidades na mesma invocação (legado) |
+| T5 | Toggle ausente | default = rotação (1 modalidade) |
+| T6 | Falha no use case | scheduler avança; próximo tick pega modalidade seguinte |
+
+Integração (Azurite): 3 invocações consecutivas em modo rotação atualizam blobs na ordem e deixam `_scheduler/modality_rotation` com `NextModalityIndex=0`.
+
 ## Evidências a coletar (para validação)
 
 Como o brief cita logging estruturado como boa prática (sem fixar formato), as evidências mínimas devem ser observáveis por inspeção de Storage e contagem de chamadas:

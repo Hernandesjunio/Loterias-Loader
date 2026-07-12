@@ -16,7 +16,21 @@ namespace IntegrationTests.FunctionApp.V0;
 public sealed class LotofacilFunctionIntegrationTests
 {
     [SkippableFact]
-    public async Task Full_flow_trigger_runs_lotofacil_mega_sena_and_quina_against_fake_lotodicas_and_persists_blobs_and_table_rows()
+    public async Task Legacy_sequential_mode_runs_all_modalities_in_one_invocation()
+    {
+        await RunFullFlowAsync(sequentialAllModalities: true, invocationCount: 1, assertAllModalitiesInSingleRun: true);
+    }
+
+    [SkippableFact]
+    public async Task Rotation_mode_runs_one_modality_per_invocation_and_advances_scheduler()
+    {
+        await RunFullFlowAsync(sequentialAllModalities: false, invocationCount: 3, assertAllModalitiesInSingleRun: false);
+    }
+
+    private static async Task RunFullFlowAsync(
+        bool sequentialAllModalities,
+        int invocationCount,
+        bool assertAllModalitiesInSingleRun)
     {
         const string token = "test-token";
 
@@ -92,7 +106,8 @@ public sealed class LotofacilFunctionIntegrationTests
                 ["Storage:LotofacilBlobName"] = lotofacilBlobName,
                 ["Storage:MegasenaBlobName"] = megaBlobName,
                 ["Storage:QuinaBlobName"] = quinaBlobName,
-                ["Storage:LoteriasStateTable"] = tableName
+                ["Storage:LoteriasStateTable"] = tableName,
+                ["LoteriasLoader:SequentialAllModalities"] = sequentialAllModalities.ToString()
             })
             .Build();
 
@@ -121,67 +136,96 @@ public sealed class LotofacilFunctionIntegrationTests
         await using var sp = services.BuildServiceProvider(validateScopes: true);
 
         var fn = sp.GetRequiredService<LoteriaLoaderTimerFunction>();
-        await fn.RunAsync(timer: null!, ct: CancellationToken.None);
+        for (var i = 0; i < invocationCount; i++)
+        {
+            await fn.RunAsync(timer: null!, ct: CancellationToken.None);
+        }
 
         var calls = fake.Calls;
-        Assert.Collection(
-            calls,
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/lotofacil/results/last", c.Path);
-                Assert.Contains("token=", c.QueryString, StringComparison.Ordinal);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/lotofacil/results/6", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/lotofacil/results/7", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/mega_sena/results/last", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/mega_sena/results/6", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/mega_sena/results/7", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/quina/results/last", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/quina/results/6", c.Path);
-                Assert.Equal(token, c.Token);
-            },
-            c =>
-            {
-                Assert.Equal("GET", c.Method);
-                Assert.Equal("/api/v2/quina/results/7", c.Path);
-                Assert.Equal(token, c.Token);
-            }
-        );
+        if (assertAllModalitiesInSingleRun)
+        {
+            Assert.Collection(
+                calls,
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/lotofacil/results/last", c.Path);
+                    Assert.Contains("token=", c.QueryString, StringComparison.Ordinal);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/lotofacil/results/6", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/lotofacil/results/7", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/mega_sena/results/last", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/mega_sena/results/6", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/mega_sena/results/7", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/quina/results/last", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/quina/results/6", c.Path);
+                    Assert.Equal(token, c.Token);
+                },
+                c =>
+                {
+                    Assert.Equal("GET", c.Method);
+                    Assert.Equal("/api/v2/quina/results/7", c.Path);
+                    Assert.Equal(token, c.Token);
+                }
+            );
+        }
+        else
+        {
+            Assert.Equal(9, calls.Count);
+            Assert.Collection(
+                calls.Take(3),
+                c => Assert.Equal("/api/v2/lotofacil/results/last", c.Path),
+                c => Assert.Equal("/api/v2/lotofacil/results/6", c.Path),
+                c => Assert.Equal("/api/v2/lotofacil/results/7", c.Path));
+            Assert.Collection(
+                calls.Skip(3).Take(3),
+                c => Assert.Equal("/api/v2/mega_sena/results/last", c.Path),
+                c => Assert.Equal("/api/v2/mega_sena/results/6", c.Path),
+                c => Assert.Equal("/api/v2/mega_sena/results/7", c.Path));
+            Assert.Collection(
+                calls.Skip(6).Take(3),
+                c => Assert.Equal("/api/v2/quina/results/last", c.Path),
+                c => Assert.Equal("/api/v2/quina/results/6", c.Path),
+                c => Assert.Equal("/api/v2/quina/results/7", c.Path));
+
+            var scheduler = await table.GetEntityAsync<TableEntity>("_scheduler", "modality_rotation");
+            Assert.Equal(0, scheduler.Value.GetInt32("NextModalityIndex"));
+            Assert.Equal(LoteriaModalityKeys.Quina, scheduler.Value.GetString("LastModalityKey"));
+        }
 
         var lfJson = (await lotofacilBlob.DownloadContentAsync()).Value.Content.ToString();
         var expectedLf = JsonNode.Parse(ExpectedLotofacilBlobJsonFor6And7())!;

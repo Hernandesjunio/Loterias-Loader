@@ -147,6 +147,28 @@ Este adendo existe para remover rigidez operacional (CRON hardcoded) e permitir 
 Referência técnica (normativa do runtime):
 - Microsoft Learn: Timer trigger suporta schedule por app setting usando `%ScheduleAppSetting%`.
 
+### 4.2) Adendo incremental — Rotação de modalidade por tick (V0.2)
+
+Este adendo reduz pressão de rate limit ao processar **uma modalidade por invocação** do timer, com estado de rotação persistido no Table Storage.
+
+- **Comportamento padrão (V0.2+)**:
+  - cada tick do timer executa **apenas uma** modalidade: `lotofacil`, `mega_sena` ou `quina`;
+  - dentro dessa modalidade, mantém a janela de **180s** e o loop incremental (vários concursos por tick, respeitando pacing de 10s);
+  - a modalidade do próximo tick é controlada por row de scheduler na tabela `LoteriasState`.
+- **Estado de scheduler (normativo)**:
+  - `PartitionKey = _scheduler`, `RowKey = modality_rotation`;
+  - campos: `NextModalityIndex` (int), `LastModalityKey` (string), `LastRunUtc` (DateTimeOffset);
+  - ordem default: `[lotofacil, mega_sena, quina]`;
+  - após cada tentativa (sucesso ou falha), avançar índice `(index + 1) % 3` para não bloquear outras loterias.
+- **Cadência com timer horário**: cada modalidade roda **~1× a cada 3 horas** (ex.: H+0 Lotofácil, H+1 Mega-Sena, H+2 Quina).
+- **Entradas de configuração (V0.2)**:
+  - **`LoteriasLoader__TimerSchedule`** (obrigatória; substitui `LotofacilLoader__TimerSchedule` como nome preferido, mantendo compatibilidade);
+  - **`LoteriasLoader__SequentialAllModalities`** (opcional; boolean; default `false`):
+    - `false`: rotação (1 modalidade por tick);
+    - `true`: comportamento legado (3 modalidades sequenciais na mesma invocação).
+  - **`LoteriasLoader__ModalityOrder`** (opcional; CSV; default `lotofacil,mega_sena,quina`).
+- **Observabilidade**: log Information `v0_scheduler` com `modality` e `index` ao selecionar modalidade.
+
 ### 5) Limites, janelas e timeouts (V0)
 
 - **Janela máxima por execução**: **180s** contados do início da função.

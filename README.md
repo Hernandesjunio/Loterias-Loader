@@ -122,8 +122,10 @@ Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um regi
 
 ## Restrições e comportamento (resumo)
 
-- **Frequência do timer**: **configurável por ambiente** via `LotofacilLoader__TimerSchedule` (ex.: `0 0 * * * *`).
-- **Janela de execução**: processamento com **janela interna máxima de 3 minutos**.
+- **Frequência do timer**: **configurável por ambiente** via `LoteriasLoader__TimerSchedule` (ex.: `0 5 * * * *`). Compatível com `LotofacilLoader__TimerSchedule`.
+- **Rotação de modalidade (padrão)**: **1 modalidade por tick** (`lotofacil` → `mega_sena` → `quina`), controlada por row `_scheduler/modality_rotation` na tabela `LoteriasState`. Com timer horário, cada modalidade executa **~1× a cada 3 horas**.
+- **Modo legado**: `LoteriasLoader__SequentialAllModalities=true` executa as 3 modalidades na mesma invocação (comportamento anterior).
+- **Janela de execução**: processamento com **janela interna máxima de 3 minutos** por modalidade.
 - **Rate limit / resiliência**: quando houver limitação (ex.: **pacing mínimo de 10s**) e/ou respostas **429**, o fluxo considera **retry** (Polly) e respeito a `Retry-After` quando existir, desde que caiba na janela.
 - **Ordem de persistência**: primeiro **gravar o blob**, depois **atualizar o estado** no Table Storage.
 
@@ -131,7 +133,10 @@ Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um regi
 
 Os nomes abaixo foram sugeridos na conversa como padrão de configuração:
 
-- `LotofacilLoader__TimerSchedule`
+- `LoteriasLoader__TimerSchedule`
+- `LoteriasLoader__SequentialAllModalities` (opcional; default `false`)
+- `LoteriasLoader__ModalityOrder` (opcional; default `lotofacil,mega_sena,quina`)
+- `LotofacilLoader__TimerSchedule` (compatibilidade)
 - `Lotodicas__BaseUrl`
 - `Lotodicas__Token`
 - `Storage__ConnectionString`

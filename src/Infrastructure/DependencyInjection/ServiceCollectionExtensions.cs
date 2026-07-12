@@ -24,6 +24,19 @@ public static class ServiceCollectionExtensions
             .Validate(o => !string.IsNullOrWhiteSpace(o.QuinaBlobName), $"{StorageOptions.SectionName}__QuinaBlobName é obrigatório")
             .Validate(o => !string.IsNullOrWhiteSpace(o.LoteriasStateTable), $"{StorageOptions.SectionName}__LoteriasStateTable é obrigatório");
 
+        services.AddOptions<LoteriasLoaderOptions>()
+            .Bind(configuration.GetSection(LoteriasLoaderOptions.SectionName));
+
+        services.AddSingleton<ILoteriasLoaderSchedulerStore, AzureTableLoteriasLoaderSchedulerStore>();
+        services.AddSingleton<ILoteriasLoaderScheduler>(static sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<LoteriasLoaderOptions>>().Value;
+            return new LoteriasModalityRotationScheduler(
+                sp.GetRequiredService<ILoteriasLoaderSchedulerStore>(),
+                sp.GetRequiredService<IClock>(),
+                options.ParseModalityOrder());
+        });
+
         services.AddHttpClient<LotodicasApiClient>((sp, http) =>
         {
             var opt = sp.GetRequiredService<IOptions<LotodicasOptions>>().Value;
