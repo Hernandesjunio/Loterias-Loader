@@ -1,48 +1,51 @@
-# Lotofacil-Loader
+# Loterias-Loader
 
-Atualizador de resultados da **Lotofácil** executado como **Azure Function** (**C# / .NET**) com **Timer Trigger**.
+Atualizador de resultados de **Lotofácil**, **Mega-Sena** e **Quina**, executado como **Azure Function** (**C# / .NET**) com **Timer Trigger**.
 
-O sistema mantém um **JSON** num **Blob Storage** (para consumo externo via **SAS token**) e usa **Azure Table Storage** como estado para saber **qual foi o último concurso carregado**, evitando trabalho redundante e permitindo retomar atualizações em execuções futuras.
+O sistema mantém **blobs JSON** (consumo externo via **SAS token**) e usa **Azure Table Storage** (`LoteriasState`) para estado por modalidade e rotação do scheduler.
 
 ## O que este projeto faz
 
-- **Executa por timer** (Azure Functions Timer Trigger).
-- **Consulta uma API externa** para:
-  - descobrir o **último concurso** publicado;
-  - buscar o **resultado por concurso (id)** para preencher lacunas.
-- **Atualiza um blob JSON** (nome do blob: `Lotofacil`) com uma coleção de `draws`.
-- **Persiste estado no Table Storage** (último concurso carregado), para:
-  - comparar “último carregado” vs “último disponível” antes de processar;
-  - retomar do ponto certo se faltar tempo numa execução.
+- **Executa por timer** a cada **10 minutos** (`LoteriasLoader__TimerSchedule`, ex.: `0 */10 * * * *`).
+- **Processa uma loteria por tick** (padrão): rotação `lotofacil` → `mega_sena` → `quina`, com índice persistido em `_scheduler/modality_rotation`.
+- **Consulta a API Lotodicas** via **`GET /api/v2/{modalidade}/results/all`** — **1 request HTTP** por execução/modalidade (sync bulk; ver ADR 0003).
+- **Atualiza o blob** da modalidade selecionada (`Lotofacil`, `MegaSena`, `Quina`) com a coleção `draws`.
+- **Persiste estado no Table Storage** (`LastLoadedContestId`, etc.) para retomar progresso entre ticks.
+
+Com timer de 10 minutos e 3 modalidades, **cada loteria é sincronizada aproximadamente a cada 30 minutos**.
 
 ## Fonte de verdade (documentação)
 
 Este repositório segue uma abordagem **docs-first**. As fontes de verdade são:
 
-- `docs/adrs/0001-lotofacil-loader-azure-function.md`
+- `docs/brief.md`
 - `docs/spec-driven-execution-guide.md` (inclui o **Contrato V0** normativo)
+- `docs/adrs/0003-sync-bulk-results-all-only.md`
 - `docs/fases-execucao-templates.md`
+- `AGENTS.md` (mapa para agentes de IA)
 
 ## Dados persistidos no blob
 
-O blob contém um documento JSON com a chave `draws`. Cada item inclui:
+Cada modalidade tem seu blob. Todos contêm `draws` com campos canônicos (variam por loteria):
 
-- `contest_id`
-- `draw_date`
-- `numbers`
-- `winners_15`
-- `has_winner_15`
+| Modalidade | Blob (exemplo) | Campos de ganhadores |
+|------------|----------------|----------------------|
+| Lotofácil | `Lotofacil` | `winners_15`, `has_winner_15` |
+| Mega-Sena | `MegaSena` | `winners_6`, `has_winner_6` |
+| Quina | `Quina` | `winners_5`, `has_winner_5` |
 
-O mapeamento de campos (API → blob) e o formato completo estão detalhados em `docs/spec-driven-execution-guide.md` (Contrato V0).
+Campos comuns: `contest_id`, `draw_date`, `numbers`.
+
+O mapeamento API → blob está detalhado em `docs/spec-driven-execution-guide.md` (Contrato V0).
 
 ## Carga inicial do blob (bulk / layout CEF)
 
-Se você iniciar “do zero” e depender apenas da API (com pacing mínimo de 10s), a carga completa pode levar muito tempo.
-Para evitar isso, use uma fonte **bulk** (layout histórico da CEF em CSV) e converta para o **JSON canônico** do blob.
+Se você iniciar “do zero” e depender apenas da API, a carga completa pode levar muito tempo.
+Para bootstrap, use fonte **bulk** (CSV histórico da CEF) e converta para o **JSON canônico** do blob.
 
 ### Gerar o JSON canônico a partir do CSV da CEF
 
-Este repositório inclui scripts Python (sem dependências externas) que convertem o CSV da CEF para o formato canônico (Contrato V0).
+Scripts Python (sem dependências externas) em `tools/`:
 
 #### Lotofácil
 
@@ -50,20 +53,9 @@ Este repositório inclui scripts Python (sem dependências externas) que convert
 { "draws": [ { "contest_id": 1, "draw_date": "YYYY-MM-DD", "numbers": [..15..], "winners_15": 0, "has_winner_15": false } ] }
 ```
 
-- **Script**: `tools/lotofacil_cef_to_blob.py`
-- **Entrada**: CSV da CEF (geralmente `;` e data `dd/MM/yyyy`)
-- **Saída**: JSON `UTF-8` com `draws` ordenado por `contest_id`
-
-Exemplo (Git Bash / Windows):
-
 ```bash
 python tools/lotofacil_cef_to_blob.py --input "C:\caminho\para\lotofacil.csv" --output "C:\caminho\para\Lotofacil.json" --pretty
 ```
-
-O script também suporta dados copiados do Excel (normalmente separados por **TAB**). Basta salvar o conteúdo em um arquivo `.tsv` (ou `.txt`) e rodar do mesmo jeito.
-Ele também funciona **sem header**: se a primeira linha não parecer um header, o script assume o layout posicional:
-
-- `Concurso`, `Data Sorteio`, `Bola1..Bola15`, (`Ganhadores 15 acertos` opcional)
 
 #### Mega-Sena
 
@@ -71,19 +63,9 @@ Ele também funciona **sem header**: se a primeira linha não parecer um header,
 { "draws": [ { "contest_id": 1, "draw_date": "YYYY-MM-DD", "numbers": [..6..], "winners_6": 0, "has_winner_6": false } ] }
 ```
 
-- **Script**: `tools/mega_sena_cef_to_blob.py`
-- **Entrada**: CSV da CEF (geralmente `;` e data `dd/MM/yyyy`)
-- **Saída**: JSON `UTF-8` com `draws` ordenado por `contest_id`
-
-Exemplo (Git Bash / Windows):
-
 ```bash
 python tools/mega_sena_cef_to_blob.py --input "C:\caminho\para\megasena.csv" --output "C:\caminho\para\MegaSena.json" --pretty
 ```
-
-Sem header, o layout posicional esperado é:
-
-- `Concurso`, `Data Sorteio`, `Bola1..Bola6`, (`Ganhadores 6 acertos` opcional)
 
 #### Quina
 
@@ -91,71 +73,55 @@ Sem header, o layout posicional esperado é:
 { "draws": [ { "contest_id": 1, "draw_date": "YYYY-MM-DD", "numbers": [..5..], "winners_5": 0, "has_winner_5": false } ] }
 ```
 
-- **Script**: `tools/quina_cef_to_blob.py`
-- **Entrada**: CSV da CEF (geralmente `;` e data `dd/MM/yyyy`)
-- **Saída**: JSON `UTF-8` com `draws` ordenado por `contest_id`
-
-Exemplo (Git Bash / Windows):
-
 ```bash
 python tools/quina_cef_to_blob.py --input "C:\caminho\para\quina.csv" --output "C:\caminho\para\Quina.json" --pretty
 ```
 
-Sem header, o layout posicional esperado é:
-
-- `Concurso`, `Data Sorteio`, `Bola1..Bola5`, (`Ganhadores 5 acertos` opcional)
+Os scripts aceitam CSV (`;`), TSV (Excel) ou layout posicional sem header — ver comentários em cada script.
 
 ### Subir o JSON no Blob Storage
 
-Depois de gerar o arquivo, carregue-o no seu container configurado em:
-
-- `Storage__BlobContainer`
-- `Storage__LotofacilBlobName` (no contrato V0, o nome canônico do blob é `Lotofacil`)
-
-Você pode subir com Azure Portal, `az storage blob upload`, Storage Explorer, etc.
-Após essa carga inicial, a Function passa a atuar como **incremental**, preenchendo apenas concursos novos.
+Carregue cada arquivo no container configurado em `Storage__BlobContainer`, usando os nomes em `Storage__*BlobName`.
+Após o bootstrap, a Function mantém os blobs atualizados via sync bulk da API.
 
 ## Estado no Table Storage (alto nível)
 
-O Table Storage armazena o **último concurso carregado** para o processo de atualização.
-Na conversa foram propostos (como exemplo) nomes como `LotofacilState` e um registo único de estado, incluindo `LastLoadedContestId` e `LastUpdatedAtUtc`, com uso de **ETag** para concorrência otimista.
+Tabela **`LoteriasState`**:
+
+- **Por modalidade**: último concurso carregado (`LastLoadedContestId`, `LastUpdatedAtUtc`, ETag).
+- **Scheduler**: `PartitionKey=_scheduler`, `RowKey=modality_rotation` — controla qual loteria roda no próximo tick.
 
 ## Restrições e comportamento (resumo)
 
-- **Frequência do timer**: **configurável por ambiente** via `LoteriasLoader__TimerSchedule` (ex.: `0 5 * * * *`). Compatível com `LotofacilLoader__TimerSchedule`.
-- **Rotação de modalidade (padrão)**: **1 modalidade por tick** (`lotofacil` → `mega_sena` → `quina`), controlada por row `_scheduler/modality_rotation` na tabela `LoteriasState`. Com timer horário, cada modalidade executa **~1× a cada 3 horas**.
-- **Modo legado**: `LoteriasLoader__SequentialAllModalities=true` executa as 3 modalidades na mesma invocação (comportamento anterior).
-- **Janela de execução**: processamento com **janela interna máxima de 3 minutos** por modalidade.
-- **Rate limit / resiliência**: quando houver limitação (ex.: **pacing mínimo de 10s**) e/ou respostas **429**, o fluxo considera **retry** (Polly) e respeito a `Retry-After` quando existir, desde que caiba na janela.
-- **Ordem de persistência**: primeiro **gravar o blob**, depois **atualizar o estado** no Table Storage.
+- **Frequência do timer (produção)**: **`0 */10 * * * *`** — a cada **10 minutos** via `LoteriasLoader__TimerSchedule`.
+- **Rotação de modalidade (padrão)**: **1 modalidade por tick**; ordem default `lotofacil,mega_sena,quina` (`LoteriasLoader__ModalityOrder`).
+- **Modo legado**: `LoteriasLoader__SequentialAllModalities=true` executa as 3 modalidades na mesma invocação.
+- **Sync API**: exclusivamente **`/results/all`** por modalidade (sem `/last` nem `/by_id`).
+- **Janela de execução**: **180 segundos** por modalidade (`IExecutionBudget`).
+- **Rate limit / resiliência**: retry capado pelo budget; respeita `Retry-After` em 429 quando couber na janela.
+- **Ordem de persistência**: primeiro **blob**, depois **estado** no Table Storage.
+- **Cancelamento pelo host** (timeout ~5 min Azure): scheduler **não avança** — retoma a mesma modalidade no próximo tick.
 
 ## Configuração (variáveis de ambiente)
 
-Os nomes abaixo foram sugeridos na conversa como padrão de configuração:
+Principais chaves:
 
-- `LoteriasLoader__TimerSchedule`
+- `LoteriasLoader__TimerSchedule` — ex.: `0 */10 * * * *`
 - `LoteriasLoader__SequentialAllModalities` (opcional; default `false`)
 - `LoteriasLoader__ModalityOrder` (opcional; default `lotofacil,mega_sena,quina`)
 - `LotofacilLoader__TimerSchedule` (compatibilidade)
-- `Lotodicas__BaseUrl`
-- `Lotodicas__Token`
-- `Storage__ConnectionString`
-- `Storage__BlobContainer`
-- `Storage__LotofacilBlobName`
-- `Storage__LotofacilStateTable`
+- `Lotodicas__BaseUrl`, `Lotodicas__Token`
+- `Storage__ConnectionString`, `Storage__BlobContainer`
+- `Storage__LotofacilBlobName`, `Storage__MegasenaBlobName`, `Storage__QuinaBlobName`
+- `Storage__LoteriasStateTable` (valor normativo: `LoteriasState`)
 
-Os segredos (ex.: token e credenciais do Storage) **não devem** ficar hardcoded no código-fonte.
+Segredos (token, connection strings) **não devem** ficar hardcoded no código-fonte.
 
 ## Execução local (exemplo de `local.settings.json`)
 
-Para rodar a Azure Function localmente (Azure Functions Core Tools), as variáveis podem ser fornecidas via `src/FunctionApp/local.settings.json` (**não versionar**).
+Variáveis via `src/FunctionApp/local.settings.json` (**não versionar**).
 
-O exemplo abaixo contém:
-
-- chaves **operacionais do host** (necessárias para o runtime local iniciar);
-- chaves **do domínio (V0)** (normativas no contrato em `docs/spec-driven-execution-guide.md`, seção “Entradas canônicas”).
-
-> Observação: os valores abaixo são placeholders. Não comite tokens/segredos.
+> Valores abaixo são placeholders. Não comite tokens/segredos.
 
 ```json
 {
@@ -164,20 +130,25 @@ O exemplo abaixo contém:
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
     "AzureWebJobsStorage": "<connection-string-para-storage-ou-emulador>",
 
-    "LotofacilLoader__TimerSchedule": "0 0 * * * *",
+    "LoteriasLoader__TimerSchedule": "0 */10 * * * *",
+    "LoteriasLoader__SequentialAllModalities": "false",
     "Lotodicas__BaseUrl": "https://www.lotodicas.com.br",
     "Lotodicas__Token": "<seu-token>",
 
     "Storage__ConnectionString": "<connection-string-do-storage>",
     "Storage__BlobContainer": "<nome-do-container>",
     "Storage__LotofacilBlobName": "Lotofacil",
-    "Storage__LotofacilStateTable": "LotofacilState"
+    "Storage__MegasenaBlobName": "MegaSena",
+    "Storage__QuinaBlobName": "Quina",
+    "Storage__LoteriasStateTable": "LoteriasState",
+
+    "Logging__LogLevel__Default": "Information",
+    "Logging__LogLevel__Lotofacil.Loader": "Debug"
   }
 }
 ```
 
-Para **testes locais**, você pode acelerar o timer (por exemplo, **a cada minuto**) ajustando `LotofacilLoader__TimerSchedule` para `0 * * * * *`.
-Em **produção**, mantenha o valor **normativo/recomendado** (`0 0 * * * *`), salvo decisão explícita de contrato.
+Para **testes locais**, você pode acelerar o timer (ex.: a cada minuto: `0 * * * * *`).
 
 ## Deploy manual (gerar ZIP em Release)
 
@@ -199,8 +170,7 @@ O arquivo final fica em `artifacts/functionapp.zip`.
 
 ### Publicar o ZIP (opções)
 
-- **Azure Portal (Zip Deploy)**:
-  - Function App → *Deployment Center* (ou *Advanced Tools / Kudu*) → Zip Deploy → enviar `artifacts/functionapp.zip`.
+- **Azure Portal (Zip Deploy)**: Function App → *Deployment Center* → Zip Deploy → enviar `artifacts/functionapp.zip`.
 - **Azure Functions Core Tools**:
 
 ```bash
@@ -209,9 +179,7 @@ func azure functionapp publish "<NOME_DA_FUNCTION_APP>"
 
 ## Hooks de Git (qualidade local)
 
-Este repositório inclui um hook `pre-push` para **bloquear pushes** quando `dotnet test` falhar.
-
-- **Instalar (Git Bash)**:
+Hook `pre-push` bloqueia push quando `dotnet test` falhar.
 
 ```bash
 ./scripts/install-git-hooks.sh
@@ -220,5 +188,4 @@ Este repositório inclui um hook `pre-push` para **bloquear pushes** quando `dot
 ## Não-objetivos
 
 - Não há promessa de “previsão”, “melhor chance” ou qualquer garantia de resultado.
-- Não há implementação de consumo externo do blob (o consumo via SAS é responsabilidade de quem consome).
-
+- Não há implementação de consumo externo do blob (consumo via SAS é responsabilidade de quem consome).
