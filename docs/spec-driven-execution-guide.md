@@ -313,6 +313,11 @@ Após obter `latestId` pelo endpoint “último”:
   2) pacing mínimo do plano free: **10s** entre **inícios** de requests para a API;
   3) intervalo fixo de retry quando não houver `Retry-After`: **30s**.
 - **Teto pela janela**: nenhuma espera/retry pode ultrapassar o deadline. Se ultrapassar, encerrar com parada segura.
+- **Nota de implementação (V0)**:
+  - o cliente HTTP (`LotodicasApiClient`) consulta o orçamento compartilhado (`IExecutionBudget`, exposto via `IRunContext.CurrentBudget`) antes de cada espera de retry (`CapWait`);
+  - se a espera capada for zero, não aguarda e falha a chamada (`BudgetExceededException`; log `http.retry_skipped reason=budget`);
+  - o use case cria um `CancellationToken` ligado ao deadline de **180s** e o propaga a API, blob, state e pacing;
+  - cancelamento pelo **host** (ex.: timeout de 5 min do Azure) **não** é tratado como parada segura de janela — a exceção propaga para o timer, que **não** avança o scheduler de rotação.
 
 ### 13) Idempotência, concorrência e checkpoint (V0)
 

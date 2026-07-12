@@ -94,8 +94,24 @@ public sealed class LoteriaLoaderTimerRotationTests
         Assert.Equal(1, store.CurrentState!.NextModalityIndex);
     }
 
+    [Fact]
+    public async Task T7_host_cancellation_does_not_advance_scheduler()
+    {
+        var store = new InMemoryLoteriasLoaderSchedulerStore();
+        using var cts = new CancellationTokenSource();
+        var tracking = new BlockingModalityTrackingApiClient();
+        var fn = CreateFunction(tracking, sequentialAllModalities: false, schedulerStore: store);
+
+        var runTask = fn.RunAsync(timer: null!, cts.Token);
+        await Task.Delay(50);
+        cts.Cancel();
+
+        await runTask;
+        Assert.Null(store.CurrentState);
+    }
+
     private static LoteriaLoaderTimerFunction CreateFunction(
-        ModalityTrackingApiClient api,
+        ILotteriesApiClient api,
         bool? sequentialAllModalities,
         InMemoryLoteriasLoaderSchedulerStore? schedulerStore = null)
     {
@@ -247,6 +263,24 @@ public sealed class LoteriaLoaderTimerRotationTests
             }
 
             return Task.FromResult(5);
+        }
+
+        public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
+            throw new InvalidOperationException("not expected in rotation timer tests");
+
+        public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct) =>
+            throw new InvalidOperationException("not expected in rotation timer tests");
+    }
+
+    private sealed class BlockingModalityTrackingApiClient : ILotteriesApiClient
+    {
+        public List<string> ModalitiesCalled { get; } = [];
+
+        public async Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct)
+        {
+            ModalitiesCalled.Add(lotteryApiSegment);
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return 5;
         }
 
         public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>

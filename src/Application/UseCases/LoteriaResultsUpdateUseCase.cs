@@ -52,6 +52,40 @@ public sealed class LoteriaResultsUpdateUseCase
         var nowUtc = _clock.UtcNow;
         const int deadlineSeconds = 180;
         var deadlineUtc = nowUtc.AddSeconds(deadlineSeconds);
+        var budget = new ExecutionBudget(_clock, deadlineUtc);
+        _runContext.SetExecutionBudget(budget);
+
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budgetCts.CancelAfter(deadlineUtc - _clock.UtcNow);
+        var budgetCt = budgetCts.Token;
+
+        try
+        {
+            return await ExecuteCoreAsync(
+                startUtc,
+                startTimestamp,
+                deadlineSeconds,
+                deadlineUtc,
+                budget,
+                budgetCt,
+                ct);
+        }
+        finally
+        {
+            _runContext.SetExecutionBudget(null);
+        }
+    }
+
+    private async Task<UpdateLoteriaResultsOutcome> ExecuteCoreAsync(
+        DateTimeOffset startUtc,
+        long startTimestamp,
+        int deadlineSeconds,
+        DateTimeOffset deadlineUtc,
+        IExecutionBudget budget,
+        CancellationToken budgetCt,
+        CancellationToken hostCt)
+    {
+        var nowUtc = _clock.UtcNow;
 
         var nowLocal = ConvertToSaoPaulo(nowUtc);
         var todayLocal = DateOnly.FromDateTime(nowLocal.DateTime);
@@ -75,14 +109,14 @@ public sealed class LoteriaResultsUpdateUseCase
 
         _log.LogDebug("state.read.start");
         EmitEvent("state.read.start");
-        var state = await ReadOrInitializeStateAsync(deadlineUtc, ct);
+        var state = await ReadOrInitializeStateAsync(budget, budgetCt);
         EmitEvent("state.read.ok");
         _log.LogDebug(
             "state.read.ok last_loaded_contest_id={last_loaded_contest_id} last_loaded_draw_date={last_loaded_draw_date}",
             state.LastLoadedContestId,
             state.LastLoadedDrawDate);
 
-        if (!HasMinimumBudget(deadlineUtc))
+        if (!HasMinimumBudget(budget))
         {
             _log.LogDebug("budget.insufficient reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
             return FinalizeAndReturn(Outcome(
@@ -96,13 +130,24 @@ public sealed class LoteriaResultsUpdateUseCase
 
         _log.LogDebug("blob.read.start");
         EmitEvent("blob.read.start");
-        var doc = await ReadBlobDocumentAsync(ct);
+        var doc = await ReadBlobDocumentAsync(budgetCt);
         EmitEvent("blob.read.ok");
         var drawsById = ToDrawMap(doc);
         if (drawsById.Count == 0)
         {
             _log.LogDebug("bootstrap.required draws_count=0");
-            return FinalizeAndReturn(await ExecuteBootstrapAsync(state, deadlineSeconds, ct), startUtc, startTimestamp);
+            if (!HasMinimumBudget(budget))
+            {
+                return FinalizeAndReturn(Outcome(
+                    ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
+                    state.LastLoadedContestId,
+                    null,
+                    0,
+                    state.LastLoadedContestId,
+                    deadlineSeconds), startUtc, startTimestamp);
+            }
+
+            return FinalizeAndReturn(await ExecuteBootstrapAsync(state, deadlineSeconds, budgetCt), startUtc, startTimestamp);
         }
 
         var blobMaxContestId = drawsById.Keys.Max();
@@ -139,7 +184,37 @@ public sealed class LoteriaResultsUpdateUseCase
 
         _log.LogDebug("latestId.fetch.start");
         EmitEvent("latestId.fetch.start");
-        var latestId = await _api.GetLatestContestIdAsync(_lotteryApiSegment, ct);
+        int latestId;
+        try
+        {
+            latestId = await _api.GetLatestContestIdAsync(_lotteryApiSegment, budgetCt);
+        }
+        catch (BudgetExceededException)
+        {
+            _log.LogWarning("latestId.fetch.failed reason=budget reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
+            return FinalizeAndReturn(Outcome(
+                ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
+                state.LastLoadedContestId,
+                null,
+                0,
+                state.LastLoadedContestId,
+                deadlineSeconds), startUtc, startTimestamp);
+        }
+        catch (OperationCanceledException) when (hostCt.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (budgetCt.IsCancellationRequested)
+        {
+            _log.LogWarning("latestId.fetch.failed reason=budget_cancel reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
+            return FinalizeAndReturn(Outcome(
+                ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
+                state.LastLoadedContestId,
+                null,
+                0,
+                state.LastLoadedContestId,
+                deadlineSeconds), startUtc, startTimestamp);
+        }
         EmitEvent("latestId.fetch.ok", new ActivityTagsCollection { ["latest_id"] = latestId });
         _log.LogDebug("latestId.fetch.ok latest_id={latest_id}", latestId);
         if (latestId <= state.LastLoadedContestId)
@@ -169,7 +244,7 @@ public sealed class LoteriaResultsUpdateUseCase
 
         for (var id = nextId; id <= latestId; id++)
         {
-            if (!HasMinimumBudget(deadlineUtc))
+            if (!HasMinimumBudget(budget))
             {
                 _log.LogDebug("budget.insufficient_in_loop next_id={next_id} current_id={current_id}", nextId, id);
                 break;
@@ -181,15 +256,16 @@ public sealed class LoteriaResultsUpdateUseCase
                 var wait = earliest - _clock.UtcNow;
                 if (wait > TimeSpan.Zero)
                 {
-                    if (_clock.UtcNow.Add(wait) >= deadlineUtc)
+                    var cappedWait = budget.CapWait(wait);
+                    if (cappedWait <= TimeSpan.Zero)
                     {
                         _log.LogDebug("pacing.wait_skipped_window_expiring wait_seconds={wait_seconds}", wait.TotalSeconds);
                         break;
                     }
 
-                    _runContext.AddWaitSeconds(wait.TotalSeconds);
-                    _log.LogDebug("pacing.wait start wait_seconds={wait_seconds}", wait.TotalSeconds);
-                    await _delay.DelayAsync(wait, ct);
+                    _runContext.AddWaitSeconds(cappedWait.TotalSeconds);
+                    _log.LogDebug("pacing.wait start wait_seconds={wait_seconds}", cappedWait.TotalSeconds);
+                    await _delay.DelayAsync(cappedWait, budgetCt);
                 }
             }
 
@@ -199,9 +275,23 @@ public sealed class LoteriaResultsUpdateUseCase
             try
             {
                 EmitEvent("incremental.id.start", new ActivityTagsCollection { ["contest_id"] = id });
-                var raw = await _api.GetContestByIdRawAsync(_lotteryApiSegment, id, ct);
+                var raw = await _api.GetContestByIdRawAsync(_lotteryApiSegment, id, budgetCt);
                 draw = _catalog.ParseContestToDraw(raw);
                 EmitEvent("incremental.id.ok", new ActivityTagsCollection { ["contest_id"] = id });
+            }
+            catch (BudgetExceededException)
+            {
+                _log.LogWarning("incremental.id.failed_stop contest_id={contest_id} reason=budget", id);
+                break;
+            }
+            catch (OperationCanceledException) when (hostCt.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (budgetCt.IsCancellationRequested)
+            {
+                _log.LogWarning("incremental.id.failed_stop contest_id={contest_id} reason=budget_cancel", id);
+                break;
             }
             catch
             {
@@ -231,7 +321,7 @@ public sealed class LoteriaResultsUpdateUseCase
 
         _log.LogDebug("persist.blob.start persisted_last_id={persisted_last_id}", lastPersistableId);
         EmitEvent("persist.blob.start");
-        await _blob.WriteRawAsync(newDoc, ct);
+        await _blob.WriteRawAsync(newDoc, budgetCt);
         EmitEvent("persist.blob.ok");
 
         var newState = state with
@@ -243,7 +333,7 @@ public sealed class LoteriaResultsUpdateUseCase
 
         _log.LogDebug("persist.state.start persisted_last_id={persisted_last_id}", lastPersistableId);
         EmitEvent("persist.state.start");
-        await _state.WriteRawAsync(newState, ct);
+        await _state.WriteRawAsync(newState, budgetCt);
         EmitEvent("persist.state.ok");
 
         return FinalizeAndReturn(new UpdateLoteriaResultsOutcome(
@@ -342,8 +432,8 @@ public sealed class LoteriaResultsUpdateUseCase
         };
     }
 
-    private bool HasMinimumBudget(DateTimeOffset deadlineUtc) =>
-        deadlineUtc - _clock.UtcNow >= TimeSpan.FromSeconds(15);
+    private static bool HasMinimumBudget(IExecutionBudget budget) =>
+        budget.HasMinimumBudget(TimeSpan.FromSeconds(15));
 
     private bool BlobContainsLoadedDraw(IReadOnlyDictionary<int, object> drawsById, LoteriaLoaderState state)
     {
@@ -378,7 +468,7 @@ public sealed class LoteriaResultsUpdateUseCase
         return TimeZoneInfo.ConvertTime(utcNow, tz);
     }
 
-    private async Task<LoteriaLoaderState> ReadOrInitializeStateAsync(DateTimeOffset deadlineUtc, CancellationToken ct)
+    private async Task<LoteriaLoaderState> ReadOrInitializeStateAsync(IExecutionBudget budget, CancellationToken ct)
     {
         var raw = await _state.TryReadRawAsync(ct);
         if (raw is not null)
@@ -413,7 +503,7 @@ public sealed class LoteriaResultsUpdateUseCase
             ETag: null
         );
 
-        if (!HasMinimumBudget(deadlineUtc))
+        if (!HasMinimumBudget(budget))
         {
             return init;
         }

@@ -80,15 +80,26 @@ public sealed class LoteriaLoaderTimerFunction
             acquire.Index,
             runId);
 
+        var shouldAdvance = false;
         try
         {
             await ExecuteModalityAsync(runId, acquire.ModalityKey, ct);
+            shouldAdvance = true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "v0_host_cancelled run_id={run_id} modality={modality}",
+                runId,
+                acquire.ModalityKey);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "v0_unhandled run_id={run_id} modality={modality}", runId, acquire.ModalityKey);
+            shouldAdvance = true;
         }
-        finally
+
+        if (shouldAdvance)
         {
             await _scheduler.AdvanceAfterAttemptAsync(acquire, ct);
         }

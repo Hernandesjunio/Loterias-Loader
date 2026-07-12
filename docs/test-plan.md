@@ -281,6 +281,23 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
     - Entre chamadas, há espera até completar ~10s desde a última chamada (`lastApiCallUtc` como conceito discutido)
     - Se a espera impedir concluir todos os ids em 3 minutos, aplica-se a retomada (D1)
 
+- **H1 — `CapWait` respeita budget restante** (`ExecutionBudgetTests`)
+  - **Entrada**: deadline com 20s restantes; espera solicitada de 60s.
+  - **Saída esperada**: `CapWait` retorna 20s; após o deadline, retorna 0.
+
+- **H2 — retry HTTP capado pelo budget** (`LotodicasApiClientBudgetTests`)
+  - **Entrada (API)**: 429 com `Retry-After: 60` quando restam 20s de budget.
+  - **Saída esperada**:
+    - espera no máximo o budget restante (20s), não 60s;
+    - com budget esgotado, retry ignorado imediatamente (`BudgetExceededException`; log `http.retry_skipped reason=budget`).
+
+- **H3 — expiração de janela no loop incremental** (`V0ContractBehaviorTests.Window_expiry_stops_safely_and_next_run_resumes_from_checkpoint`)
+  - **Objetivo**: reforço de D1 com budget HTTP integrado; encerra com `SAFE_STOP_WINDOW_EXPIRED` e retoma no próximo tick.
+
+- **H4 — scheduler não avança em cancel do host** (`LoteriaLoaderTimerRotationTests.T7`; ver também G/T7)
+  - **Condição**: use case bloqueado/cancelado pelo token do host (timeout Azure).
+  - **Saída esperada**: scheduler **não** incrementa `NextModalityIndex`; próximo tick repete a mesma modalidade.
+
 ### F. Concorrência e consistência (Table ETag + ordem blob→table)
 
 - **F1 — concorrência otimista via ETag no Table**
@@ -318,6 +335,7 @@ Matriz de testes unitários/contrato (implementados em `tests/ContractTests.V0/`
 | T4 | `SequentialAllModalities=true` | 3 modalidades na mesma invocação (legado) |
 | T5 | Toggle ausente | default = rotação (1 modalidade) |
 | T6 | Falha no use case | scheduler avança; próximo tick pega modalidade seguinte |
+| T7 | Cancel do host (timeout Azure) | scheduler **não** avança; próximo tick repete modalidade |
 
 Integração (Azurite): 3 invocações consecutivas em modo rotação atualizam blobs na ordem e deixam `_scheduler/modality_rotation` com `NextModalityIndex=0`.
 

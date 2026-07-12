@@ -15,11 +15,21 @@ public sealed class AsyncLocalRunContext : IRunContext
                 RetriesCount: s.RetriesCount,
                 RateLimitWaitSecondsTotal: s.RateLimitWaitSecondsTotal);
 
+    public IExecutionBudget? CurrentBudget => Local.Value?.ExecutionBudget;
+
     public IDisposable BeginRun(string runId, string modality)
     {
         var prior = Local.Value;
         Local.Value = new State(runId, modality);
         return new Pop(prior);
+    }
+
+    public void SetExecutionBudget(IExecutionBudget? budget)
+    {
+        if (Local.Value is { } s)
+        {
+            s.ExecutionBudget = budget;
+        }
     }
 
     public void IncrementRetries(int count = 1)
@@ -69,6 +79,7 @@ public sealed class AsyncLocalRunContext : IRunContext
         public string Modality { get; }
         public int RetriesCount { get; set; }
         public double RateLimitWaitSecondsTotal { get; set; }
+        public IExecutionBudget? ExecutionBudget { get; set; }
     }
 }
 

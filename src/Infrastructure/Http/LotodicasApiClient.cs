@@ -19,17 +19,20 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
     private readonly LotodicasOptions _options;
     private readonly ILogger<LotodicasApiClient> _log;
     private readonly IRunContext _runContext;
+    private readonly IDelay _delay;
 
     public LotodicasApiClient(
         HttpClient http,
         IOptions<LotodicasOptions> options,
         ILogger<LotodicasApiClient> log,
-        IRunContext runContext)
+        IRunContext runContext,
+        IDelay delay)
     {
         _http = http;
         _options = options.Value;
         _log = log;
         _runContext = runContext;
+        _delay = delay;
     }
 
     public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct) =>
@@ -104,7 +107,6 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                 {
                     var delay = TryGetRetryAfter(resp) ?? TimeSpan.FromSeconds(30);
                     _runContext.IncrementRetries();
-                    _runContext.AddWaitSeconds(delay.TotalSeconds);
                     _log.LogDebug("http.retry_scheduled reason=429 retry_after_seconds={retry_after_seconds} attempt={attempt}", delay.TotalSeconds, attempt);
                     Activity.Current?.AddEvent(new ActivityEvent(
                         "http.retry_scheduled",
@@ -114,7 +116,7 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                             ["retry_after_seconds"] = delay.TotalSeconds,
                             ["attempt"] = attempt
                         }));
-                    await Task.Delay(delay, ct);
+                    await DelayForRetryAsync(delay, "429", ct);
                     continue;
                 }
 
@@ -122,7 +124,6 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                 {
                     var delay = TimeSpan.FromSeconds(30);
                     _runContext.IncrementRetries();
-                    _runContext.AddWaitSeconds(delay.TotalSeconds);
                     _log.LogDebug("http.retry_scheduled reason=5xx retry_after_seconds={retry_after_seconds} attempt={attempt}", delay.TotalSeconds, attempt);
                     Activity.Current?.AddEvent(new ActivityEvent(
                         "http.retry_scheduled",
@@ -132,7 +133,7 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                             ["retry_after_seconds"] = delay.TotalSeconds,
                             ["attempt"] = attempt
                         }));
-                    await Task.Delay(delay, ct);
+                    await DelayForRetryAsync(delay, "5xx", ct);
                     continue;
                 }
 
@@ -141,11 +142,18 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                 var stream = await resp.Content.ReadAsStreamAsync(ct);
                 return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             }
+            catch (BudgetExceededException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && attempt < maxAttempts)
             {
                 var delay = TimeSpan.FromSeconds(30);
                 _runContext.IncrementRetries();
-                _runContext.AddWaitSeconds(delay.TotalSeconds);
                 _log.LogDebug("http.retry_scheduled reason=timeout retry_after_seconds={retry_after_seconds} attempt={attempt}", delay.TotalSeconds, attempt);
                 Activity.Current?.AddEvent(new ActivityEvent(
                     "http.retry_scheduled",
@@ -155,7 +163,7 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                         ["retry_after_seconds"] = delay.TotalSeconds,
                         ["attempt"] = attempt
                     }));
-                await Task.Delay(delay, ct);
+                await DelayForRetryAsync(delay, "timeout", ct);
                 continue;
             }
             finally
@@ -165,6 +173,42 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
         }
 
         throw new InvalidOperationException("HTTP resilience loop exhausted unexpectedly.");
+    }
+
+    private async Task DelayForRetryAsync(TimeSpan requestedDelay, string reason, CancellationToken ct)
+    {
+        var budget = _runContext.CurrentBudget;
+        var cappedDelay = budget is null ? requestedDelay : budget.CapWait(requestedDelay);
+
+        if (cappedDelay <= TimeSpan.Zero)
+        {
+            _log.LogWarning(
+                "http.retry_skipped reason=budget retry_reason={retry_reason} requested_seconds={requested_seconds} remaining_seconds={remaining_seconds}",
+                reason,
+                requestedDelay.TotalSeconds,
+                budget?.Remaining.TotalSeconds ?? 0d);
+            Activity.Current?.AddEvent(new ActivityEvent(
+                "http.retry_skipped",
+                tags: new ActivityTagsCollection
+                {
+                    ["reason"] = "budget",
+                    ["retry_reason"] = reason,
+                    ["requested_seconds"] = requestedDelay.TotalSeconds
+                }));
+            throw new BudgetExceededException($"Retry wait for {reason} exceeds remaining execution budget.");
+        }
+
+        if (cappedDelay < requestedDelay)
+        {
+            _log.LogDebug(
+                "http.retry_capped retry_reason={retry_reason} requested_seconds={requested_seconds} capped_seconds={capped_seconds}",
+                reason,
+                requestedDelay.TotalSeconds,
+                cappedDelay.TotalSeconds);
+        }
+
+        _runContext.AddWaitSeconds(cappedDelay.TotalSeconds);
+        await _delay.DelayAsync(cappedDelay, ct);
     }
 
     private static string SanitizePath(string relativePath)
