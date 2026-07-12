@@ -37,7 +37,7 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
         using var doc = await SendJsonWithResilienceAsync(
             relativePath: $"/api/v2/{lotteryApiSegment}/results/all?token={Uri.EscapeDataString(_options.Token)}",
             ct);
-        return doc;
+        return doc.RootElement.GetRawText();
     }
 
     private async Task<JsonDocument> SendJsonWithResilienceAsync(string relativePath, CancellationToken ct)

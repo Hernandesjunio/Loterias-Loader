@@ -316,6 +316,12 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
 | J4 | 429 no `/all` | retry capado pelo budget |
 | J5 | 401/403 no `/all` | `HARD_FAIL_API_AUTH` |
 
+### K. Lifetime do payload HTTP (regressão Azure)
+
+| ID | Cenário | Saída esperada |
+|----|---------|----------------|
+| K1 | `LotodicasApiClient` real retorna JSON de `/results/all` | use case parseia após dispose interno do `JsonDocument`; `COMPLETED_SUCCESS` |
+
 ### G. Rotação de modalidade por tick (V0.2)
 
 Matriz de testes unitários/contrato (implementados em `tests/ContractTests.V0/`):
