@@ -14,8 +14,6 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
 {
     private readonly string _token;
     private readonly ConcurrentQueue<RecordedCall> _calls = new();
-    private readonly Dictionary<(string Modality, int Id), string> _byId = new();
-    private readonly Dictionary<string, string> _lastJsonByModality = new();
     private readonly Dictionary<string, string> _allJsonByModality = new();
     private WebApplication? _app;
 
@@ -24,18 +22,6 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
     public Uri BaseUrl { get; private set; } = new Uri("http://127.0.0.1:0");
 
     public IReadOnlyList<RecordedCall> Calls => _calls.ToArray();
-
-    public LotodicasFakeServer WithLatestResponseJson(string modality, string json)
-    {
-        _lastJsonByModality[modality] = json;
-        return this;
-    }
-
-    public LotodicasFakeServer WithContestResponseJson(string modality, int id, string json)
-    {
-        _byId[(modality, id)] = json;
-        return this;
-    }
 
     public LotodicasFakeServer WithAllResponseJson(string modality, string json)
     {
@@ -55,19 +41,9 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
 
         var app = builder.Build();
 
-        app.MapGet("/api/v2/{modality}/results/last", async (HttpContext context, string modality) =>
-        {
-            await HandleAsync(context, modality, endpoint: "last", contestId: null);
-        });
-
         app.MapGet("/api/v2/{modality}/results/all", async (HttpContext context, string modality) =>
         {
-            await HandleAsync(context, modality, endpoint: "all", contestId: null);
-        });
-
-        app.MapGet("/api/v2/{modality}/results/{id:int}", async (HttpContext context, string modality, int id) =>
-        {
-            await HandleAsync(context, modality, endpoint: "by_id", contestId: id);
+            await HandleAsync(context, modality);
         });
 
         _app = app;
@@ -86,15 +62,13 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         BaseUrl = new Uri(first.TrimEnd('/') + "/");
     }
 
-    private async Task HandleAsync(HttpContext ctx, string modality, string endpoint, int? contestId)
+    private async Task HandleAsync(HttpContext ctx, string modality)
     {
         var token = ctx.Request.Query["token"].ToString();
         _calls.Enqueue(new RecordedCall(
             Method: ctx.Request.Method,
             Path: ctx.Request.Path.Value ?? "",
             QueryString: ctx.Request.QueryString.Value ?? "",
-            Endpoint: endpoint,
-            ContestId: contestId,
             Token: token,
             Modality: modality
         ));
@@ -106,15 +80,7 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
             return;
         }
 
-        string? payload = endpoint switch
-        {
-            "last" => _lastJsonByModality.GetValueOrDefault(modality),
-            "all" => _allJsonByModality.GetValueOrDefault(modality),
-            "by_id" when contestId is not null && _byId.TryGetValue((modality, contestId.Value), out var j) => j,
-            _ => null
-        };
-
-        if (payload is null)
+        if (!_allJsonByModality.TryGetValue(modality, out var payload))
         {
             ctx.Response.StatusCode = (int)HttpStatusCode.NotFound;
             await ctx.Response.WriteAsync("{\"error\":\"fixture_not_found\"}");
@@ -148,8 +114,6 @@ internal sealed class LotodicasFakeServer : IAsyncDisposable
         string Method,
         string Path,
         string QueryString,
-        string Endpoint,
-        int? ContestId,
         string Token,
         string Modality
     );

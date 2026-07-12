@@ -25,7 +25,8 @@ Construir um sistema **descritivo** e **determinístico** que:
 ## Fontes de verdade (ordem sugerida)
 
 1. `docs/brief.md` — escopo, restrições, não-objetivos, política de determinismo; envelope e superfície em alto nível (placeholders)
-2. `docs/contract-test-plan.md` — fixtures/goldens e ordem dos testes de contrato
+2. `docs/adrs/0003-sync-bulk-results-all-only.md` — sync exclusivo via `/results/all` (breaking change)
+3. `docs/contract-test-plan.md` — fixtures/goldens e ordem dos testes de contrato
 3. `docs/spec-driven-execution-guide.md` — ordem prática: spec → teste → código
 4. `docs/fases-execucao-templates.md` — templates atômicos copy/paste
 5. `docs/test-plan.md` — definição de cobertura e matriz

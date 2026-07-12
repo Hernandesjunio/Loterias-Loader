@@ -127,7 +127,6 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ILogger<LoteriaResultsUpdateUseCase>>(),
             sp.GetRequiredService<IRunContext>(),
             sp.GetRequiredService<IClock>(),
-            sp.GetRequiredService<IDelay>(),
             sp.GetRequiredService<ILotteriesApiClient>(),
             sp.GetRequiredKeyedService<ILoteriaBlobStore>(modalityKey),
             sp.GetRequiredKeyedService<ILoteriaStateStore>(modalityKey),

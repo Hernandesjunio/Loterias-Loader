@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json;
 using Lotofacil.Loader.Domain;
@@ -11,7 +10,6 @@ public sealed class LoteriaResultsUpdateUseCase
     private readonly ILogger<LoteriaResultsUpdateUseCase> _log;
     private readonly IRunContext _runContext;
     private readonly IClock _clock;
-    private readonly IDelay _delay;
     private readonly ILotteriesApiClient _api;
     private readonly ILoteriaBlobStore _blob;
     private readonly ILoteriaStateStore _state;
@@ -23,7 +21,6 @@ public sealed class LoteriaResultsUpdateUseCase
         ILogger<LoteriaResultsUpdateUseCase> log,
         IRunContext runContext,
         IClock clock,
-        IDelay delay,
         ILotteriesApiClient api,
         ILoteriaBlobStore blob,
         ILoteriaStateStore state,
@@ -34,7 +31,6 @@ public sealed class LoteriaResultsUpdateUseCase
         _log = log;
         _runContext = runContext;
         _clock = clock;
-        _delay = delay;
         _api = api;
         _blob = blob;
         _state = state;
@@ -65,7 +61,6 @@ public sealed class LoteriaResultsUpdateUseCase
                 startUtc,
                 startTimestamp,
                 deadlineSeconds,
-                deadlineUtc,
                 budget,
                 budgetCt,
                 ct);
@@ -80,16 +75,10 @@ public sealed class LoteriaResultsUpdateUseCase
         DateTimeOffset startUtc,
         long startTimestamp,
         int deadlineSeconds,
-        DateTimeOffset deadlineUtc,
         IExecutionBudget budget,
         CancellationToken budgetCt,
         CancellationToken hostCt)
     {
-        var nowUtc = _clock.UtcNow;
-
-        var nowLocal = ConvertToSaoPaulo(nowUtc);
-        var todayLocal = DateOnly.FromDateTime(nowLocal.DateTime);
-
         var ctx = _runContext.Current;
         using var activity = StartRootActivity(ctx, deadlineSeconds);
         using var scope = _log.BeginScope(new Dictionary<string, object?>
@@ -101,11 +90,7 @@ public sealed class LoteriaResultsUpdateUseCase
             ["timezone"] = "America/Sao_Paulo"
         });
 
-        _log.LogDebug(
-            "update_results.start now_utc={now_utc} deadline_utc={deadline_utc} today_local={today_local}",
-            nowUtc,
-            deadlineUtc,
-            todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        _log.LogDebug("update_results.start now_utc={now_utc}", _clock.UtcNow);
 
         _log.LogDebug("state.read.start");
         EmitEvent("state.read.start");
@@ -130,34 +115,17 @@ public sealed class LoteriaResultsUpdateUseCase
 
         _log.LogDebug("blob.read.start");
         EmitEvent("blob.read.start");
-        var doc = await ReadBlobDocumentAsync(budgetCt);
+        var existingDoc = await ReadBlobDocumentAsync(budgetCt);
         EmitEvent("blob.read.ok");
-        var drawsById = ToDrawMap(doc);
-        if (drawsById.Count == 0)
+        var existingDraws = ToDrawMap(existingDoc);
+        if (existingDraws.Count > 0 && state.LastLoadedContestId > existingDraws.Keys.Max())
         {
-            _log.LogDebug("bootstrap.required draws_count=0");
-            if (!HasMinimumBudget(budget))
-            {
-                return FinalizeAndReturn(Outcome(
-                    ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
-                    state.LastLoadedContestId,
-                    null,
-                    0,
-                    state.LastLoadedContestId,
-                    deadlineSeconds), startUtc, startTimestamp);
-            }
-
-            return FinalizeAndReturn(await ExecuteBootstrapAsync(state, deadlineSeconds, budgetCt), startUtc, startTimestamp);
-        }
-
-        var blobMaxContestId = drawsById.Keys.Max();
-        if (state.LastLoadedContestId > blobMaxContestId)
-        {
-            _log.LogDebug(
+            var blobMax = existingDraws.Keys.Max();
+            _log.LogError(
                 "state.inconsistent reason_stop={reason_stop} table_last_loaded_contest_id={table_last_loaded_contest_id} blob_max_contest_id={blob_max_contest_id}",
                 ReasonStop.HARD_FAIL_STATE_INCONSISTENT_TABLE_GT_BLOB,
                 state.LastLoadedContestId,
-                blobMaxContestId);
+                blobMax);
             return FinalizeAndReturn(Outcome(
                 ReasonStop.HARD_FAIL_STATE_INCONSISTENT_TABLE_GT_BLOB,
                 state.LastLoadedContestId,
@@ -167,33 +135,29 @@ public sealed class LoteriaResultsUpdateUseCase
                 deadlineSeconds), startUtc, startTimestamp);
         }
 
-        var todayLocalStr = todayLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        if (state.LastLoadedDrawDate is not null &&
-            string.Equals(state.LastLoadedDrawDate, todayLocalStr, StringComparison.Ordinal) &&
-            BlobContainsLoadedDraw(drawsById, state))
+        _log.LogDebug("sync.all.start");
+        EmitEvent("sync.all.start");
+        object rawAll;
+        try
         {
-            _log.LogDebug("guards.early_exit reason_stop={reason_stop} last_loaded_draw_date={last_loaded_draw_date}", ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY, state.LastLoadedDrawDate);
+            rawAll = await _api.GetAllResultsRawAsync(_lotteryApiSegment, budgetCt);
+        }
+        catch (BudgetExceededException)
+        {
+            _log.LogWarning("sync.all.failed reason=budget reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
             return FinalizeAndReturn(Outcome(
-                ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY,
+                ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
                 state.LastLoadedContestId,
                 null,
                 0,
                 state.LastLoadedContestId,
                 deadlineSeconds), startUtc, startTimestamp);
         }
-
-        _log.LogDebug("latestId.fetch.start");
-        EmitEvent("latestId.fetch.start");
-        int latestId;
-        try
+        catch (LotodicasApiAuthException ex)
         {
-            latestId = await _api.GetLatestContestIdAsync(_lotteryApiSegment, budgetCt);
-        }
-        catch (BudgetExceededException)
-        {
-            _log.LogWarning("latestId.fetch.failed reason=budget reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
+            _log.LogError(ex, "sync.all.failed reason=auth reason_stop={reason_stop}", ReasonStop.HARD_FAIL_API_AUTH);
             return FinalizeAndReturn(Outcome(
-                ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
+                ReasonStop.HARD_FAIL_API_AUTH,
                 state.LastLoadedContestId,
                 null,
                 0,
@@ -206,7 +170,7 @@ public sealed class LoteriaResultsUpdateUseCase
         }
         catch (OperationCanceledException) when (budgetCt.IsCancellationRequested)
         {
-            _log.LogWarning("latestId.fetch.failed reason=budget_cancel reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
+            _log.LogWarning("sync.all.failed reason=budget_cancel reason_stop={reason_stop}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED);
             return FinalizeAndReturn(Outcome(
                 ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
                 state.LastLoadedContestId,
@@ -215,123 +179,61 @@ public sealed class LoteriaResultsUpdateUseCase
                 state.LastLoadedContestId,
                 deadlineSeconds), startUtc, startTimestamp);
         }
-        EmitEvent("latestId.fetch.ok", new ActivityTagsCollection { ["latest_id"] = latestId });
-        _log.LogDebug("latestId.fetch.ok latest_id={latest_id}", latestId);
-        if (latestId <= state.LastLoadedContestId)
+
+        Dictionary<int, object> drawsById;
+        try
         {
-            _log.LogDebug("aligned.early_exit reason_stop={reason_stop} latest_id={latest_id} last_loaded_contest_id={last_loaded_contest_id}",
-                ReasonStop.EARLY_EXIT_ALREADY_ALIGNED,
-                latestId,
-                state.LastLoadedContestId);
+            drawsById = ParseBulkDraws(rawAll);
+        }
+        catch (JsonException ex)
+        {
+            _log.LogError(ex, "sync.all.failed reason=schema reason_stop={reason_stop}", ReasonStop.HARD_FAIL_API_SCHEMA);
             return FinalizeAndReturn(Outcome(
-                ReasonStop.EARLY_EXIT_ALREADY_ALIGNED,
+                ReasonStop.HARD_FAIL_API_SCHEMA,
                 state.LastLoadedContestId,
-                latestId,
+                null,
+                0,
+                state.LastLoadedContestId,
+                deadlineSeconds), startUtc, startTimestamp);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _log.LogError(ex, "sync.all.failed reason=schema reason_stop={reason_stop}", ReasonStop.HARD_FAIL_API_SCHEMA);
+            return FinalizeAndReturn(Outcome(
+                ReasonStop.HARD_FAIL_API_SCHEMA,
+                state.LastLoadedContestId,
+                null,
                 0,
                 state.LastLoadedContestId,
                 deadlineSeconds), startUtc, startTimestamp);
         }
 
-        var nextId = state.LastLoadedContestId + 1;
-        var lastPersistableId = state.LastLoadedContestId;
-        string? lastPersistableDrawDate = state.LastLoadedDrawDate;
+        EmitEvent("sync.all.ok", new ActivityTagsCollection { ["draws_count"] = drawsById.Count });
+        _log.LogDebug("sync.all.ok draws_count={draws_count}", drawsById.Count);
 
-        DateTimeOffset? lastRequestStartUtc = null;
-        var processedCount = 0;
-
-        _log.LogDebug("incremental.loop.start next_id={next_id} latest_id={latest_id}", nextId, latestId);
-        EmitEvent("incremental.loop.start", new ActivityTagsCollection { ["next_id"] = nextId, ["latest_id"] = latestId });
-
-        for (var id = nextId; id <= latestId; id++)
+        var latestId = drawsById.Count == 0 ? 0 : drawsById.Keys.Max();
+        var persistedLastId = ComputeMaxContiguousContestId(drawsById.Keys);
+        string? persistedDrawDate = null;
+        if (persistedLastId > 0 && drawsById.TryGetValue(persistedLastId, out var persistedDraw))
         {
-            if (!HasMinimumBudget(budget))
-            {
-                _log.LogDebug("budget.insufficient_in_loop next_id={next_id} current_id={current_id}", nextId, id);
-                break;
-            }
-
-            if (lastRequestStartUtc is not null)
-            {
-                var earliest = lastRequestStartUtc.Value.AddSeconds(10);
-                var wait = earliest - _clock.UtcNow;
-                if (wait > TimeSpan.Zero)
-                {
-                    var cappedWait = budget.CapWait(wait);
-                    if (cappedWait <= TimeSpan.Zero)
-                    {
-                        _log.LogDebug("pacing.wait_skipped_window_expiring wait_seconds={wait_seconds}", wait.TotalSeconds);
-                        break;
-                    }
-
-                    _runContext.AddWaitSeconds(cappedWait.TotalSeconds);
-                    _log.LogDebug("pacing.wait start wait_seconds={wait_seconds}", cappedWait.TotalSeconds);
-                    await _delay.DelayAsync(cappedWait, budgetCt);
-                }
-            }
-
-            lastRequestStartUtc = _clock.UtcNow;
-
-            object draw;
-            try
-            {
-                EmitEvent("incremental.id.start", new ActivityTagsCollection { ["contest_id"] = id });
-                var raw = await _api.GetContestByIdRawAsync(_lotteryApiSegment, id, budgetCt);
-                draw = _catalog.ParseContestToDraw(raw);
-                EmitEvent("incremental.id.ok", new ActivityTagsCollection { ["contest_id"] = id });
-            }
-            catch (BudgetExceededException)
-            {
-                _log.LogWarning("incremental.id.failed_stop contest_id={contest_id} reason=budget", id);
-                break;
-            }
-            catch (OperationCanceledException) when (hostCt.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (OperationCanceledException) when (budgetCt.IsCancellationRequested)
-            {
-                _log.LogWarning("incremental.id.failed_stop contest_id={contest_id} reason=budget_cancel", id);
-                break;
-            }
-            catch
-            {
-                _log.LogDebug("incremental.id.failed_stop contest_id={contest_id}", id);
-                break;
-            }
-
-            drawsById[_catalog.GetContestIdFromDraw(draw)] = draw;
-            lastPersistableId = id;
-            lastPersistableDrawDate = _catalog.GetDrawDateFromDraw(draw);
-            processedCount++;
-        }
-
-        if (lastPersistableId == state.LastLoadedContestId)
-        {
-            _log.LogDebug("stop.no_progress reason_stop={reason_stop} processed_count={processed_count}", ReasonStop.SAFE_STOP_WINDOW_EXPIRED, processedCount);
-            return FinalizeAndReturn(Outcome(
-                ReasonStop.SAFE_STOP_WINDOW_EXPIRED,
-                state.LastLoadedContestId,
-                latestId,
-                processedCount,
-                state.LastLoadedContestId,
-                deadlineSeconds), startUtc, startTimestamp);
+            persistedDrawDate = _catalog.GetDrawDateFromDraw(persistedDraw);
         }
 
         var newDoc = _catalog.MergeOrderedDraws(drawsById);
 
-        _log.LogDebug("persist.blob.start persisted_last_id={persisted_last_id}", lastPersistableId);
+        _log.LogDebug("persist.blob.start persisted_last_id={persisted_last_id}", persistedLastId);
         EmitEvent("persist.blob.start");
         await _blob.WriteRawAsync(newDoc, budgetCt);
         EmitEvent("persist.blob.ok");
 
         var newState = state with
         {
-            LastLoadedContestId = lastPersistableId,
-            LastLoadedDrawDate = lastPersistableDrawDate,
+            LastLoadedContestId = persistedLastId,
+            LastLoadedDrawDate = persistedDrawDate,
             LastUpdatedAtUtc = _clock.UtcNow
         };
 
-        _log.LogDebug("persist.state.start persisted_last_id={persisted_last_id}", lastPersistableId);
+        _log.LogDebug("persist.state.start persisted_last_id={persisted_last_id}", persistedLastId);
         EmitEvent("persist.state.start");
         await _state.WriteRawAsync(newState, budgetCt);
         EmitEvent("persist.state.ok");
@@ -341,11 +243,40 @@ public sealed class LoteriaResultsUpdateUseCase
             ReasonStop: ReasonStop.COMPLETED_SUCCESS,
             LastLoadedContestId: state.LastLoadedContestId,
             LatestId: latestId,
-            ProcessedCount: processedCount,
-            PersistedLastId: lastPersistableId,
+            ProcessedCount: drawsById.Count,
+            PersistedLastId: persistedLastId,
             DeadlineSeconds: deadlineSeconds,
             Timezone: "America/Sao_Paulo"
         ), startUtc, startTimestamp);
+    }
+
+    private Dictionary<int, object> ParseBulkDraws(object rawAll)
+    {
+        var drawsById = new Dictionary<int, object>();
+        foreach (var rawContest in EnumerateBulkContests(rawAll))
+        {
+            var draw = _catalog.ParseContestToDraw(rawContest);
+            drawsById[_catalog.GetContestIdFromDraw(draw)] = draw;
+        }
+
+        return drawsById;
+    }
+
+    private static int ComputeMaxContiguousContestId(IEnumerable<int> contestIds)
+    {
+        var set = contestIds.ToHashSet();
+        if (set.Count == 0)
+        {
+            return 0;
+        }
+
+        var id = 1;
+        while (set.Contains(id))
+        {
+            id++;
+        }
+
+        return id - 1;
     }
 
     private UpdateLoteriaResultsOutcome FinalizeAndReturn(UpdateLoteriaResultsOutcome outcome, DateTimeOffset startUtc, long startTimestamp)
@@ -435,39 +366,6 @@ public sealed class LoteriaResultsUpdateUseCase
     private static bool HasMinimumBudget(IExecutionBudget budget) =>
         budget.HasMinimumBudget(TimeSpan.FromSeconds(15));
 
-    private bool BlobContainsLoadedDraw(IReadOnlyDictionary<int, object> drawsById, LoteriaLoaderState state)
-    {
-        if (state.LastLoadedDrawDate is null)
-        {
-            return false;
-        }
-
-        if (!drawsById.TryGetValue(state.LastLoadedContestId, out var draw))
-        {
-            return false;
-        }
-
-        return string.Equals(
-            _catalog.GetDrawDateFromDraw(draw),
-            state.LastLoadedDrawDate,
-            StringComparison.Ordinal);
-    }
-
-    private static DateTimeOffset ConvertToSaoPaulo(DateTimeOffset utcNow)
-    {
-        TimeZoneInfo tz;
-        try
-        {
-            tz = TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            tz = TimeZoneInfo.FindSystemTimeZoneById("E. South America Standard Time");
-        }
-
-        return TimeZoneInfo.ConvertTime(utcNow, tz);
-    }
-
     private async Task<LoteriaLoaderState> ReadOrInitializeStateAsync(IExecutionBudget budget, CancellationToken ct)
     {
         var raw = await _state.TryReadRawAsync(ct);
@@ -478,10 +376,10 @@ public sealed class LoteriaResultsUpdateUseCase
 
         var doc = await ReadBlobDocumentAsync(ct);
         var drawsMap = ToDrawMap(doc);
-        var max = drawsMap.Count == 0 ? (int?)null : drawsMap.Keys.Max();
+        var max = drawsMap.Count == 0 ? (int?)null : ComputeMaxContiguousContestId(drawsMap.Keys);
 
         string? maxDate = null;
-        if (max is not null && drawsMap.TryGetValue(max.Value, out var maxDraw))
+        if (max is > 0 && drawsMap.TryGetValue(max.Value, out var maxDraw))
         {
             maxDate = _catalog.GetDrawDateFromDraw(maxDraw);
         }
@@ -521,60 +419,6 @@ public sealed class LoteriaResultsUpdateUseCase
         }
 
         return _catalog.ParseDocument(raw);
-    }
-
-    private async Task<UpdateLoteriaResultsOutcome> ExecuteBootstrapAsync(
-        LoteriaLoaderState state,
-        int deadlineSeconds,
-        CancellationToken ct)
-    {
-        _log.LogDebug("bootstrap.start");
-        EmitEvent("bootstrap.start");
-        var rawAll = await _api.GetAllResultsRawAsync(_lotteryApiSegment, ct);
-        var drawsById = new Dictionary<int, object>();
-        foreach (var rawContest in EnumerateBulkContests(rawAll))
-        {
-            var draw = _catalog.ParseContestToDraw(rawContest);
-            drawsById[_catalog.GetContestIdFromDraw(draw)] = draw;
-        }
-
-        var bootstrapDoc = _catalog.MergeOrderedDraws(drawsById);
-        _log.LogDebug("persist.blob.start bootstrap=true processed_count={processed_count}", drawsById.Count);
-        EmitEvent("persist.blob.start", new ActivityTagsCollection { ["bootstrap"] = true });
-        await _blob.WriteRawAsync(bootstrapDoc, ct);
-        EmitEvent("persist.blob.ok");
-
-        var maxContestId = drawsById.Count == 0 ? 0 : drawsById.Keys.Max();
-        string? maxDrawDate = null;
-        if (drawsById.TryGetValue(maxContestId, out var maxDraw))
-        {
-            maxDrawDate = _catalog.GetDrawDateFromDraw(maxDraw);
-        }
-
-        var bootstrapState = state with
-        {
-            LastLoadedContestId = maxContestId,
-            LastLoadedDrawDate = maxDrawDate,
-            LastUpdatedAtUtc = _clock.UtcNow
-        };
-
-        _log.LogDebug("persist.state.start bootstrap=true persisted_last_id={persisted_last_id}", maxContestId);
-        EmitEvent("persist.state.start", new ActivityTagsCollection { ["bootstrap"] = true });
-        await _state.WriteRawAsync(bootstrapState, ct);
-        EmitEvent("persist.state.ok");
-        _log.LogDebug("bootstrap.ok persisted_last_id={persisted_last_id}", maxContestId);
-        EmitEvent("bootstrap.ok");
-
-        return new UpdateLoteriaResultsOutcome(
-            ModalityKey: _modalityKey,
-            ReasonStop: ReasonStop.COMPLETED_SUCCESS,
-            LastLoadedContestId: state.LastLoadedContestId,
-            LatestId: null,
-            ProcessedCount: drawsById.Count,
-            PersistedLastId: maxContestId,
-            DeadlineSeconds: deadlineSeconds,
-            Timezone: "America/Sao_Paulo"
-        );
     }
 
     private static IEnumerable<object> EnumerateBulkContests(object rawAll)

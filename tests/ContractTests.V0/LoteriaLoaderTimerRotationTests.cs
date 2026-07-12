@@ -185,7 +185,6 @@ public sealed class LoteriaLoaderTimerRotationTests
                 sp.GetRequiredService<ILogger<LoteriaResultsUpdateUseCase>>(),
                 sp.GetRequiredService<IRunContext>(),
                 sp.GetRequiredService<IClock>(),
-                sp.GetRequiredService<IDelay>(),
                 sp.GetRequiredService<ILotteriesApiClient>(),
                 new InMemoryLoteriaBlobStore(seededBlob),
                 new InMemoryLoteriaStateStore(new LoteriaLoaderState(5, "2026-04-01", DateTimeOffset.MinValue, null)),
@@ -254,7 +253,7 @@ public sealed class LoteriaLoaderTimerRotationTests
 
         public List<string> ModalitiesCalled { get; } = [];
 
-        public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct)
+        public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct)
         {
             ModalitiesCalled.Add(lotteryApiSegment);
             if (_failModality is not null && string.Equals(lotteryApiSegment, _failModality, StringComparison.Ordinal))
@@ -262,32 +261,32 @@ public sealed class LoteriaLoaderTimerRotationTests
                 throw new InvalidOperationException("simulated API failure");
             }
 
-            return Task.FromResult(5);
+            return Task.FromResult<object>(MinimalAllResultsJson(lotteryApiSegment));
         }
 
-        public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
-            throw new InvalidOperationException("not expected in rotation timer tests");
-
-        public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct) =>
-            throw new InvalidOperationException("not expected in rotation timer tests");
+        private static string MinimalAllResultsJson(string modality) =>
+            modality switch
+            {
+                LoteriaModalityKeys.Lotofacil =>
+                    """{"data":[{"draw_number":5,"draw_date":"2026-04-01","drawing":{"draw":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]},"prizes":[{"name":"15 acertos","winners":0}]}]}""",
+                LoteriaModalityKeys.MegaSena =>
+                    """{"data":[{"draw_number":5,"draw_date":"2026-04-01","drawing":{"draw":[1,2,3,4,5,6]},"prizes":[{"name":"6 acertos","winners":0}]}]}""",
+                LoteriaModalityKeys.Quina =>
+                    """{"data":[{"draw_number":5,"draw_date":"2026-04-01","drawing":{"draw":[1,2,3,4,5]},"prizes":[{"name":"5 acertos","winners":0}]}]}""",
+                _ => throw new InvalidOperationException($"Unsupported modality {modality}")
+            };
     }
 
     private sealed class BlockingModalityTrackingApiClient : ILotteriesApiClient
     {
         public List<string> ModalitiesCalled { get; } = [];
 
-        public async Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct)
+        public async Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct)
         {
             ModalitiesCalled.Add(lotteryApiSegment);
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
-            return 5;
+            return "{}";
         }
-
-        public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
-            throw new InvalidOperationException("not expected in rotation timer tests");
-
-        public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct) =>
-            throw new InvalidOperationException("not expected in rotation timer tests");
     }
 
     private sealed class InMemoryLoteriaBlobStore : ILoteriaBlobStore

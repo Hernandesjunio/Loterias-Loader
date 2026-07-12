@@ -180,10 +180,9 @@ Este adendo reduz pressão de rate limit ao processar **uma modalidade por invoc
 
 - **Base URL canônica**: `Lotodicas__BaseUrl`.
 - **Autenticação**: token via query string `token=<TOKEN>` (segredo em `Lotodicas__Token`).
-- **Endpoints normativos**:
-  - **Último concurso**: `/api/v2/lotofacil/results/last?token=<TOKEN>`
-  - **Concurso por id**: `/api/v2/lotofacil/results/{id}?token=<TOKEN>`
-  - **Carga inicial (bulk)**: `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>` (sem paginação; retorna todos os concursos desde o primeiro)
+- **Endpoints normativos** (ADR 0003):
+  - **Sync bulk (único)**: `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>` (sem paginação; retorna todos os concursos desde o primeiro)
+  - **Removidos**: `/results/last` e `/results/{id}` (breaking change V0.3)
 - **Campos mínimos consumidos do JSON** (qualquer ausência/tipo inesperado é **falha dura**):
   - `data.draw_number` (inteiro; id do concurso)
   - `data.draw_date` (string; `YYYY-MM-DD`)
@@ -278,40 +277,26 @@ Após obter `latestId` pelo endpoint “último”:
 
 - Se `latestId <= LastLoadedContestId`: encerrar (alinhado; não baixar por id; sem persistências).
 
-### 11) Algoritmo normativo de atualização (V0)
+### 11) Algoritmo normativo de atualização (V0 — ADR 0003 bulk-only)
 
-1. Ler state no Table (`LastLoadedContestId`, `LastLoadedDrawDate`, ETag).
-2. Aplicar encerramentos antecipados (seção 10).
-2.1. Ler blob atual. Se o blob **não existir** ou existir com `draws` **vazio**:
-   - executar a **carga inicial (bulk)** via `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>`;
-   - persistir **blob primeiro** e então atualizar o state no Table para o `max(contest_id)` materializado;
-   - encerrar com sucesso (os endpoints incrementais servem para atualizar concursos novos após o bootstrap).
-3. Chamar endpoint “último” e obter `latestId = data.draw_number`.
-4. Se `latestId <= LastLoadedContestId`: encerrar.
-5. Calcular lacunas `id` no intervalo **contíguo** \([LastLoadedContestId + 1, latestId]\), em ordem crescente.
-6. Preparar documento alvo do blob em memória:
-   - ler blob atual (se existir); se não existir, iniciar `{ "draws": [] }`.
-   - normalizar/validar invariantes canônicas (seção 7) em memória antes de persistir.
-7. Processar `id` em ordem crescente até expirar a janela:
-   - chamar `/results/{id}` aplicando resiliência/rate-limit (seção 12);
-   - em sucesso 200, mapear para o item canônico e **upsert** no documento em memória;
-   - após cada id bem-sucedido, atualizar um marcador interno `lastPersistableId = id` (sempre contíguo).
-8. Persistir (seção 13) o blob e então o state avançando **somente até `lastPersistableId`**.
-9. Se a janela expirar em qualquer ponto: encerrar com parada segura; próxima execução retoma do checkpoint persistido.
+1. Ler state no Table (`LastLoadedContestId`, `LastLoadedDrawDate`, ETag); se ausente, inicializar a partir do blob existente.
+2. Validar consistência Table↔Blob (`HARD_FAIL_STATE_INCONSISTENT_TABLE_GT_BLOB` se Table > blob).
+3. Chamar **uma vez** `/api/v2/{lotteryApiSegment}/results/all?token=<TOKEN>` (resiliência seção 12).
+4. Parsear `data[]` → documento canônico do blob; calcular `latestId = max(draw_number)` e checkpoint = maior id **contíguo desde 1**.
+5. Persistir **blob primeiro**, **Table depois** com checkpoint contíguo.
+6. Encerrar com `COMPLETED_SUCCESS` (ou parada segura/falha dura conforme seções 12–14).
 
 ### 12) Rate limit / retry / pacing — precedência e teto (V0)
 
 - **Classificação base**:
   - **429**: respeitar `Retry-After` quando presente.
   - **5xx**, timeouts e falhas de rede: transitórios (passíveis de retry dentro da janela).
-  - **4xx (exceto 429)**:
-    - **404 no meio de uma lacuna** (`/results/{id}` inexistente): tratar como **falha dura de lacuna** (a execução deve parar imediatamente sem avançar além do último id contíguo já persistido; não “pular” o id ausente).
-    - **401/403** (token inválido): **falha dura**.
+  - **4xx (exceto 429)**: **401/403** → falha dura (`HARD_FAIL_API_AUTH`); demais 4xx → falha conforme classificação do client.
 - **Retries (Polly)**: somente enquanto houver janela restante suficiente para concluir e persistir.
 - **Precedência de espera entre tentativas/chamadas** (do maior para o menor):
   1) `Retry-After` (quando presente e parseável);
-  2) pacing mínimo do plano free: **10s** entre **inícios** de requests para a API;
-  3) intervalo fixo de retry quando não houver `Retry-After`: **30s**.
+  2) intervalo fixo de retry quando não houver `Retry-After`: **30s**.
+- **Pacing 10s entre requests**: **N/A** (uma única chamada `/results/all` por execução; ADR 0003).
 - **Teto pela janela**: nenhuma espera/retry pode ultrapassar o deadline. Se ultrapassar, encerrar com parada segura.
 - **Nota de implementação (V0)**:
   - o cliente HTTP (`LotodicasApiClient`) consulta o orçamento compartilhado (`IExecutionBudget`, exposto via `IRunContext.CurrentBudget`) antes de cada espera de retry (`CapWait`);
@@ -347,17 +332,13 @@ A execução deve emitir logs estruturados suficientes para explicar **por que p
   - `reason_stop` (enum), `last_loaded_contest_id`, `latest_id`, `processed_count`, `persisted_last_id`
   - `http_attempts`, `retries_count`, `rate_limit_wait_seconds_total`, `elapsed_seconds`
 - **`reason_stop` (normativo; exemplos de valores)**:
-  - `EARLY_EXIT_NOT_BUSINESS_DAY`
-  - `EARLY_EXIT_BEFORE_20H`
-  - `EARLY_EXIT_ALREADY_LOADED_TODAY`
-  - `EARLY_EXIT_ALREADY_ALIGNED` (latestId <= lastLoaded)
+  - `COMPLETED_SUCCESS`
   - `SAFE_STOP_WINDOW_EXPIRED`
   - `SAFE_STOP_CONCURRENCY_TABLE_ETAG`
   - `SAFE_STOP_CONCURRENCY_BLOB_CONFLICT`
   - `HARD_FAIL_CONFIG_INVALID`
   - `HARD_FAIL_API_AUTH`
   - `HARD_FAIL_API_SCHEMA`
-  - `HARD_FAIL_GAP_NOT_FOUND_404`
   - `HARD_FAIL_STATE_INCONSISTENT_TABLE_GT_BLOB`
 
 ## V0 do sistema (fatia alvo deste repositório)
@@ -389,8 +370,7 @@ Com base nas decisões em `docs/adrs/*` e no **Contrato V0 (normativo)** acima, 
 ### 2) Definir fixtures e goldens (determinísticos)
 
 - **Fixtures de API**:
-  - resposta do endpoint “último” (`/results/last`)
-  - respostas por concurso (`/results/{id}`) incluindo casos: 200, 429 com Retry-After, 5xx, timeout
+  - resposta de `/results/all` (incluindo casos: 200, 429 com Retry-After, 401/403, 5xx, timeout)
 - **Fixtures de calendário**:
   - dia útil antes das 20h
   - dia útil após as 20h

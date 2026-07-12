@@ -15,12 +15,10 @@ internal static class ContractTestHarness
         ILoteriaBlobStore blob,
         ILoteriaStateStore state,
         IClock clock,
-        IDelay delay,
         CancellationToken ct = default)
     {
         var services = new ServiceCollection();
         services.AddSingleton(clock);
-        services.AddSingleton(delay);
         services.AddSingleton(api);
         services.AddSingleton(blob);
         services.AddSingleton(state);
@@ -31,7 +29,6 @@ internal static class ContractTestHarness
             sp.GetRequiredService<ILogger<LoteriaResultsUpdateUseCase>>(),
             sp.GetRequiredService<IRunContext>(),
             sp.GetRequiredService<IClock>(),
-            sp.GetRequiredService<IDelay>(),
             sp.GetRequiredService<ILotteriesApiClient>(),
             sp.GetRequiredService<ILoteriaBlobStore>(),
             sp.GetRequiredService<ILoteriaStateStore>(),
@@ -155,47 +152,14 @@ internal sealed class FakeDelay : IDelay
 
 internal sealed class FakeApi : ILotteriesApiClient
 {
-    private readonly Dictionary<int, string> _byId = new();
     private string? _allResultsRaw;
-    private int _latestId;
-
-    public FakeApi(int latestId) => _latestId = latestId;
 
     public List<string> Calls { get; } = new();
-
-    public FakeApi SetLatest(int latestId)
-    {
-        _latestId = latestId;
-        return this;
-    }
-
-    public FakeApi WithContest(int id, string rawJson)
-    {
-        _byId[id] = rawJson;
-        return this;
-    }
 
     public FakeApi WithAllResults(string rawJson)
     {
         _allResultsRaw = rawJson;
         return this;
-    }
-
-    public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct)
-    {
-        Calls.Add($"GetLatest:{lotteryApiSegment}");
-        return Task.FromResult(_latestId);
-    }
-
-    public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct)
-    {
-        Calls.Add($"GetById:{lotteryApiSegment}:{contestId}");
-        if (!_byId.TryGetValue(contestId, out var raw))
-        {
-            throw new InvalidOperationException($"Missing fixture for contestId={contestId}");
-        }
-
-        return Task.FromResult<object>(raw);
     }
 
     public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct)

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Lotofacil.Loader.Application;
 using Microsoft.Extensions.Options;
@@ -10,11 +9,6 @@ namespace Lotofacil.Loader.Infrastructure;
 
 public sealed class LotodicasApiClient : ILotteriesApiClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly HttpClient _http;
     private readonly LotodicasOptions _options;
     private readonly ILogger<LotodicasApiClient> _log;
@@ -35,36 +29,16 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
         _delay = delay;
     }
 
-    public Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct) =>
-        GetLatestContestIdCoreAsync(lotteryApiSegment, ct);
-
-    public Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
-        GetContestByIdCoreAsync(lotteryApiSegment, contestId, ct);
-
     public Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct) =>
         GetAllResultsCoreAsync(lotteryApiSegment, ct);
 
-    private async Task<int> GetLatestContestIdCoreAsync(string lotteryApiSegment, CancellationToken ct)
+    private async Task<object> GetAllResultsCoreAsync(string lotteryApiSegment, CancellationToken ct)
     {
         using var doc = await SendJsonWithResilienceAsync(
-            relativePath: $"/api/v2/{lotteryApiSegment}/results/last?token={Uri.EscapeDataString(_options.Token)}",
-            ct
-        );
-
-        return doc.RootElement.GetProperty("data").GetProperty("draw_number").GetInt32();
-    }
-
-    private async Task<object> GetContestByIdCoreAsync(string lotteryApiSegment, int contestId, CancellationToken ct) =>
-        await SendJsonWithResilienceAsync(
-            relativePath: $"/api/v2/{lotteryApiSegment}/results/{contestId}?token={Uri.EscapeDataString(_options.Token)}",
-            ct
-        );
-
-    private async Task<object> GetAllResultsCoreAsync(string lotteryApiSegment, CancellationToken ct) =>
-        await SendJsonWithResilienceAsync(
             relativePath: $"/api/v2/{lotteryApiSegment}/results/all?token={Uri.EscapeDataString(_options.Token)}",
-            ct
-        );
+            ct);
+        return doc;
+    }
 
     private async Task<JsonDocument> SendJsonWithResilienceAsync(string relativePath, CancellationToken ct)
     {
@@ -102,6 +76,11 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                         ["attempt"] = attempt,
                         ["path"] = SanitizePath(relativePath)
                     }));
+
+                if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                {
+                    throw new LotodicasApiAuthException((int)resp.StatusCode, SanitizePath(relativePath));
+                }
 
                 if (resp.StatusCode == HttpStatusCode.TooManyRequests && attempt < maxAttempts)
                 {
@@ -143,6 +122,10 @@ public sealed class LotodicasApiClient : ILotteriesApiClient
                 return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             }
             catch (BudgetExceededException)
+            {
+                throw;
+            }
+            catch (LotodicasApiAuthException)
             {
                 throw;
             }

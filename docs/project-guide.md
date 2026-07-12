@@ -71,7 +71,7 @@ Estas convenções existem para melhorar **descoberta**, **revisão** e **evolu�
 ### Portas (interfaces) e adaptadores (implementações)
 
 - **Portas (Application → exterior)**:
-  - `ILotofacilApiClient`: consulta `/results/last` e `/results/{id}`.
+  - `ILotteriesApiClient`: consulta **`/results/all`** (sync bulk por modalidade; ADR 0003).
   - `ILotofacilBlobStore`: lê/grava documento do blob.
   - `ILotofacilStateStore`: lê/escreve estado do último concurso (Table Storage).
   - `IClock` (opcional): abstração de tempo para eliminar defaults e facilitar testes (timezone explícita).

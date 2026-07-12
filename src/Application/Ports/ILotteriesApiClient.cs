@@ -5,9 +5,5 @@ namespace Lotofacil.Loader.Application;
 /// </summary>
 public interface ILotteriesApiClient
 {
-    Task<int> GetLatestContestIdAsync(string lotteryApiSegment, CancellationToken ct);
-
-    Task<object> GetContestByIdRawAsync(string lotteryApiSegment, int contestId, CancellationToken ct);
-
     Task<object> GetAllResultsRawAsync(string lotteryApiSegment, CancellationToken ct);
 }

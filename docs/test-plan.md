@@ -8,20 +8,20 @@ Validar que uma Azure Function (Timer Trigger) em C#/.NET:
 
 - Atualiza um **documento JSON** num blob (nome do blob: **`Lotofacil`**) contendo `draws`.
 - Mantém um **estado** no Table Storage para saber o **último concurso carregado** e evitar trabalho redundante.
-- Usa a API (`/results/last` e `/results/{id}`) para descobrir o último concurso disponível e preencher lacunas.
-- Quando o blob não existir (ou existir com `draws` vazio), realiza **carga inicial (bulk)** via endpoint `/results/all` e materializa o documento inicial.
-- Respeita as regras de encerramento antecipado (dia útil, 20h, já carregado hoje), a janela interna de **3 minutos**, e a política de resiliência/cadência (Polly, 429/Retry-After, pacing mínimo de 10s quando aplicável).
+- Usa a API **`/results/all`** em toda execução de modalidade (ADR 0003; sem `/results/last` nem `/results/{id}`).
+- Respeita a janela interna de **3 minutos** e a política de resiliência (429/Retry-After capado pelo budget).
 
 ## Fonte de verdade (recorte do spec)
 
 - **Fontes de verdade**:
   - `docs/adrs/0001-lotofacil-loader-azure-function.md`
+  - `docs/adrs/0003-sync-bulk-results-all-only.md`
   - `docs/spec-driven-execution-guide.md` (seção **Contrato V0 — Lotofacil Loader (normativo)**)
   - `docs/fases-execucao-templates.md`
 
 ## Escopo e não escopo (para testes)
 
-- **Em escopo**: leitura/gravação de Blob Storage, leitura/gravação de Table Storage (incluindo ETag como concorrência otimista), chamadas aos dois endpoints, regras de encerramento antecipado, cálculo de lacunas, janela de 3 minutos, retomada por reexecução do timer, ordem de persistência (blob antes do table), mapeamento JSON API → JSON do blob.
+- **Em escopo**: leitura/gravação de Blob Storage, leitura/gravação de Table Storage (incluindo ETag), chamada única a `/results/all`, janela de 3 minutos, ordem de persistência (blob antes do table), mapeamento JSON API → JSON do blob.
 - **Fora do escopo** (não definido no contrato V0): geração/rotação de SAS, CI/CD, nomes de Resource Group/SKU.
 
 ## Ambiente e pré-condições de execução
@@ -39,18 +39,14 @@ Nos testes, deve ser possível disparar a execução (manual/forçada) e também
 ### Dependências externas (devem ser controladas no teste)
 
 - **API Lotodicas**:
-  - Último concurso: `https://www.lotodicas.com.br/api/v2/lotofacil/results/last?token=<TOKEN>`
-  - Concurso específico: `https://www.lotodicas.com.br/api/v2/lotofacil/results/{id}?token=<TOKEN>`
-  - Carga inicial (bulk): `https://www.lotodicas.com.br/api/v2/<lotteryApiSegment>/results/all?token=<TOKEN>`
+  - Sync bulk: `https://www.lotodicas.com.br/api/v2/<lotteryApiSegment>/results/all?token=<TOKEN>`
 - **Azure Storage Account**:
   - **Blob Storage** (documento com `draws`, blob nomeado `Lotofacil`)
   - **Table Storage** (estado do loader; exemplo discutido: tabela `LotofacilState`, PK `Lotofacil`, RK `Loader`)
 
 #### Política para testes de integração (determinismo)
 
-- **Lotodicas (terceiro)**: deve ser tratado como **Fake** em testes de integração automatizados, com respostas determinísticas para:
-  - endpoint “último concurso” (`/results/last`)
-  - endpoint “concurso por id” (`/results/{id}`)
+- **Lotodicas (terceiro)**: deve ser tratado como **Fake** em testes de integração automatizados, com respostas determinísticas para `/results/all` por modalidade.
 
 Justificativa: reduzir não-determinismo e flakiness causados por rede/serviços remotos, mantendo a suite reprodutível (ver referências no fim deste documento).
 
@@ -132,14 +128,10 @@ O Table Storage deve persistir o estado “último carregado”, com os campos d
 
 ## Critérios gerais de aceitação (para cada execução)
 
-- **Encerramento antecipado** ocorre conforme as regras descritas, sem chamar a API quando não necessário.
-- Quando houver novos concursos, o loader:
-  - Chama `/results/last` para obter `latestId`
-  - Calcula lacunas `lastLoaded + 1 ... latestId`
-  - Processa ids em ordem crescente, dentro de uma janela interna de **3 minutos**
-  - Em caso de não concluir todos os ids, para e **retoma** na próxima execução a partir do estado persistido
-- **Ordem de persistência**: atualiza o **blob primeiro** e o **Table Storage depois** (para não marcar como carregado se falhar gravar blob).
-- **Idempotência**: reexecuções do timer não corrompem dados; o alinhamento `latestId <= lastLoaded` encerra sem trabalho redundante.
+- Cada execução de modalidade faz **exatamente 1** GET `/results/all`.
+- Persiste blob completo a partir de `data[]` e atualiza Table com maior id **contíguo desde 1**.
+- **Ordem de persistência**: atualiza o **blob primeiro** e o **Table Storage depois**.
+- Resiliência 429/5xx respeita budget de 180s no único request.
 
 ## Estratégia de testes (camadas)
 
@@ -313,6 +305,16 @@ Para executar “ponta a ponta” com determinismo, o teste deve conseguir **sem
   - **Saída esperada**:
     - Blob não é atualizado
     - Table **não** deve ser atualizado para refletir o id como carregado (ordem de persistência garante isso)
+
+### J. Sync bulk `/results/all` (ADR 0003)
+
+| ID | Cenário | Saída esperada |
+|----|---------|----------------|
+| J1 | Todo tick | 1 call `GetAll` por execução |
+| J2 | State vazio | blob + table atualizados; blob antes table |
+| J3 | Reexecução | sempre chama API; blob canônico estável |
+| J4 | 429 no `/all` | retry capado pelo budget |
+| J5 | 401/403 no `/all` | `HARD_FAIL_API_AUTH` |
 
 ### G. Rotação de modalidade por tick (V0.2)
 

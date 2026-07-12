@@ -9,10 +9,7 @@ O blob será disponibilizado a aplicações externas via **SAS token** (o consum
 ## Escopo (o que está dentro)
 
 - **Timer Trigger** para orquestração do carregamento.
-- Consulta a uma API externa em dois modos:
-  - **último resultado** (`/results/last`) para descobrir o concurso mais recente publicado;
-  - **resultado por concurso** (`/results/{id}`) para preencher lacunas.
-- **Carga inicial (bulk)** do blob via endpoint **`/results/all`** (sem paginação), quando o blob da modalidade **não existir** ou existir com `draws` **vazio**, para evitar que a primeira carga dependa do pacing/rate-limit de endpoints incrementais.
+- Consulta a uma API externa via endpoint **`/results/all`** (sync bulk por modalidade; **1 request por execução** — ver ADR 0003).
 - Persistência de:
   - um **documento JSON** no Blob Storage (nome do blob: `Lotofacil`);
   - o estado de “último concurso carregado” no **Table Storage** (para comparar e retomar).
@@ -100,7 +97,7 @@ Na conversa foram propostos (como exemplo):
    - se hoje não é dia útil, encerrar (**a menos que** `LotofacilLoader__DisableBusinessDayGuard=true`);
    - se hoje é dia útil e ainda não passou das 20h (na timezone definida), encerrar (**a menos que** `LotofacilLoader__Disable20hGuard=true`);
    - se hoje é dia útil, já passou das 20h e `LastLoadedDrawDate == hoje`, encerrar.
-3. Chamar o endpoint `/results/last` e obter `latestId` via `data.draw_number`.
+3. Chamar **`/results/all`** e materializar blob + Table (ADR 0003).
 3. Se `latestId <= lastLoaded`, encerrar (não há novos concursos a carregar).
 4. Caso contrário, calcular ids em falta de `lastLoaded + 1` até `latestId` e processar dentro de uma janela interna de **3 minutos**.
 5. Persistência na ordem discutida:

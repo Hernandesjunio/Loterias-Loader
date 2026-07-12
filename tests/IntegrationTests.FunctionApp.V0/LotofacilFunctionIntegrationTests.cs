@@ -48,15 +48,9 @@ public sealed class LotofacilFunctionIntegrationTests
         const string tableName = "LoteriasState";
 
         await using var fake = new LotodicasFakeServer(token)
-            .WithLatestResponseJson(LoteriaModalityKeys.Lotofacil, LatestJson(latestId: 7))
-            .WithLatestResponseJson(LoteriaModalityKeys.MegaSena, LatestJson(latestId: 7))
-            .WithLatestResponseJson(LoteriaModalityKeys.Quina, LatestJson(latestId: 7))
-            .WithContestResponseJson(LoteriaModalityKeys.Lotofacil, 6, ContestJsonLotofacil(id: 6, date: "2026-04-27", winners15: 0))
-            .WithContestResponseJson(LoteriaModalityKeys.Lotofacil, 7, ContestJsonLotofacil(id: 7, date: "2026-04-27", winners15: 5))
-            .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 6, ContestJsonMegaSena(id: 6, date: "2026-04-27", winners6: 0))
-            .WithContestResponseJson(LoteriaModalityKeys.MegaSena, 7, ContestJsonMegaSena(id: 7, date: "2026-04-27", winners6: 2))
-            .WithContestResponseJson(LoteriaModalityKeys.Quina, 6, ContestJsonQuina(id: 6, date: "2026-04-27", winners5: 0))
-            .WithContestResponseJson(LoteriaModalityKeys.Quina, 7, ContestJsonQuina(id: 7, date: "2026-04-27", winners5: 3));
+            .WithAllResponseJson(LoteriaModalityKeys.Lotofacil, AllResultsJsonLotofacil())
+            .WithAllResponseJson(LoteriaModalityKeys.MegaSena, AllResultsJsonMegaSena())
+            .WithAllResponseJson(LoteriaModalityKeys.Quina, AllResultsJsonQuina());
 
         await fake.StartAsync(CancellationToken.None);
 
@@ -144,83 +138,35 @@ public sealed class LotofacilFunctionIntegrationTests
         var calls = fake.Calls;
         if (assertAllModalitiesInSingleRun)
         {
+            Assert.Equal(3, calls.Count);
             Assert.Collection(
                 calls,
                 c =>
                 {
                     Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/lotofacil/results/last", c.Path);
+                    Assert.Equal("/api/v2/lotofacil/results/all", c.Path);
                     Assert.Contains("token=", c.QueryString, StringComparison.Ordinal);
                     Assert.Equal(token, c.Token);
                 },
                 c =>
                 {
                     Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/lotofacil/results/6", c.Path);
+                    Assert.Equal("/api/v2/mega_sena/results/all", c.Path);
                     Assert.Equal(token, c.Token);
                 },
                 c =>
                 {
                     Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/lotofacil/results/7", c.Path);
+                    Assert.Equal("/api/v2/quina/results/all", c.Path);
                     Assert.Equal(token, c.Token);
-                },
-                c =>
-                {
-                    Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/mega_sena/results/last", c.Path);
-                    Assert.Equal(token, c.Token);
-                },
-                c =>
-                {
-                    Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/mega_sena/results/6", c.Path);
-                    Assert.Equal(token, c.Token);
-                },
-                c =>
-                {
-                    Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/mega_sena/results/7", c.Path);
-                    Assert.Equal(token, c.Token);
-                },
-                c =>
-                {
-                    Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/quina/results/last", c.Path);
-                    Assert.Equal(token, c.Token);
-                },
-                c =>
-                {
-                    Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/quina/results/6", c.Path);
-                    Assert.Equal(token, c.Token);
-                },
-                c =>
-                {
-                    Assert.Equal("GET", c.Method);
-                    Assert.Equal("/api/v2/quina/results/7", c.Path);
-                    Assert.Equal(token, c.Token);
-                }
-            );
+                });
         }
         else
         {
-            Assert.Equal(9, calls.Count);
-            Assert.Collection(
-                calls.Take(3),
-                c => Assert.Equal("/api/v2/lotofacil/results/last", c.Path),
-                c => Assert.Equal("/api/v2/lotofacil/results/6", c.Path),
-                c => Assert.Equal("/api/v2/lotofacil/results/7", c.Path));
-            Assert.Collection(
-                calls.Skip(3).Take(3),
-                c => Assert.Equal("/api/v2/mega_sena/results/last", c.Path),
-                c => Assert.Equal("/api/v2/mega_sena/results/6", c.Path),
-                c => Assert.Equal("/api/v2/mega_sena/results/7", c.Path));
-            Assert.Collection(
-                calls.Skip(6).Take(3),
-                c => Assert.Equal("/api/v2/quina/results/last", c.Path),
-                c => Assert.Equal("/api/v2/quina/results/6", c.Path),
-                c => Assert.Equal("/api/v2/quina/results/7", c.Path));
+            Assert.Equal(3, calls.Count);
+            Assert.Equal("/api/v2/lotofacil/results/all", calls[0].Path);
+            Assert.Equal("/api/v2/mega_sena/results/all", calls[1].Path);
+            Assert.Equal("/api/v2/quina/results/all", calls[2].Path);
 
             var scheduler = await table.GetEntityAsync<TableEntity>("_scheduler", "modality_rotation");
             Assert.Equal(0, scheduler.Value.GetInt32("NextModalityIndex"));
@@ -228,11 +174,11 @@ public sealed class LotofacilFunctionIntegrationTests
         }
 
         var lfJson = (await lotofacilBlob.DownloadContentAsync()).Value.Content.ToString();
-        var expectedLf = JsonNode.Parse(ExpectedLotofacilBlobJsonFor6And7())!;
+        var expectedLf = JsonNode.Parse(ExpectedLotofacilBlobJsonFor1Through7())!;
         Assert.True(JsonNode.DeepEquals(expectedLf, JsonNode.Parse(lfJson)!), lfJson);
 
         var msJson = (await megaBlob.DownloadContentAsync()).Value.Content.ToString();
-        var expectedMs = JsonNode.Parse(ExpectedMegaSenaBlobJsonFor6And7())!;
+        var expectedMs = JsonNode.Parse(ExpectedMegaSenaBlobJsonFor1Through7())!;
         Assert.True(JsonNode.DeepEquals(expectedMs, JsonNode.Parse(msJson)!), msJson);
 
         var lfState = await table.GetEntityAsync<TableEntity>(LoteriaModalityKeys.Lotofacil, "Loader");
@@ -244,7 +190,7 @@ public sealed class LotofacilFunctionIntegrationTests
         Assert.Equal("2026-04-27", msState.Value.GetString("LastLoadedDrawDate"));
 
         var qnJson = (await quinaBlob.DownloadContentAsync()).Value.Content.ToString();
-        var expectedQn = JsonNode.Parse(ExpectedQuinaBlobJsonFor6And7())!;
+        var expectedQn = JsonNode.Parse(ExpectedQuinaBlobJsonFor1Through7())!;
         Assert.True(JsonNode.DeepEquals(expectedQn, JsonNode.Parse(qnJson)!), qnJson);
 
         var qnState = await table.GetEntityAsync<TableEntity>(LoteriaModalityKeys.Quina, "Loader");
@@ -252,116 +198,83 @@ public sealed class LotofacilFunctionIntegrationTests
         Assert.Equal("2026-04-27", qnState.Value.GetString("LastLoadedDrawDate"));
     }
 
-    private static string LatestJson(int latestId) =>
-        JsonSerializer.Serialize(new { data = new { draw_number = latestId } });
-
-    private static string ContestJsonLotofacil(int id, string date, int winners15)
-    {
-        var obj = new
+    private static string AllResultsJsonLotofacil() =>
+        JsonSerializer.Serialize(new
         {
-            data = new
+            data = Enumerable.Range(1, 7).Select(id => new
             {
                 draw_number = id,
-                draw_date = date,
+                draw_date = id == 7 ? "2026-04-27" : "2026-04-01",
                 drawing = new { draw = new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 } },
-                prizes = new[] { new { name = "15 acertos", winners = winners15 } }
-            }
-        };
-        return JsonSerializer.Serialize(obj);
-    }
+                prizes = new[] { new { name = "15 acertos", winners = id == 7 ? 5 : 0 } }
+            })
+        });
 
-    private static string ContestJsonMegaSena(int id, string date, int winners6)
-    {
-        var obj = new
+    private static string AllResultsJsonMegaSena() =>
+        JsonSerializer.Serialize(new
         {
-            data = new
+            data = Enumerable.Range(1, 7).Select(id => new
             {
                 draw_number = id,
-                draw_date = date,
+                draw_date = id == 7 ? "2026-04-27" : "2026-04-01",
                 drawing = new { draw = new[] { 1, 2, 3, 4, 5, 6 } },
-                prizes = new[] { new { name = "6 acertos", winners = winners6 } }
-            }
-        };
-        return JsonSerializer.Serialize(obj);
-    }
+                prizes = new[] { new { name = "6 acertos", winners = id == 7 ? 2 : 0 } }
+            })
+        });
 
-    private static string ContestJsonQuina(int id, string date, int winners5)
-    {
-        var obj = new
+    private static string AllResultsJsonQuina() =>
+        JsonSerializer.Serialize(new
         {
-            data = new
+            data = Enumerable.Range(1, 7).Select(id => new
             {
                 draw_number = id,
-                draw_date = date,
+                draw_date = id == 7 ? "2026-04-27" : "2026-04-01",
                 drawing = new { draw = new[] { 1, 2, 3, 4, 5 } },
-                prizes = new[] { new { name = "5 acertos", winners = winners5 } }
-            }
-        };
-        return JsonSerializer.Serialize(obj);
-    }
+                prizes = new[] { new { name = "5 acertos", winners = id == 7 ? 3 : 0 } }
+            })
+        });
 
-    private static string ExpectedLotofacilBlobJsonFor6And7() =>
+    private static string ExpectedLotofacilBlobJsonFor1Through7() =>
         """
         {
           "draws": [
-            {
-              "contest_id": 6,
-              "draw_date": "2026-04-27",
-              "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
-              "winners_15": 0,
-              "has_winner_15": false
-            },
-            {
-              "contest_id": 7,
-              "draw_date": "2026-04-27",
-              "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
-              "winners_15": 5,
-              "has_winner_15": true
-            }
+            { "contest_id": 1, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 0, "has_winner_15": false },
+            { "contest_id": 2, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 0, "has_winner_15": false },
+            { "contest_id": 3, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 0, "has_winner_15": false },
+            { "contest_id": 4, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 0, "has_winner_15": false },
+            { "contest_id": 5, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 0, "has_winner_15": false },
+            { "contest_id": 6, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 0, "has_winner_15": false },
+            { "contest_id": 7, "draw_date": "2026-04-27", "numbers": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], "winners_15": 5, "has_winner_15": true }
           ]
         }
         """;
 
-    private static string ExpectedMegaSenaBlobJsonFor6And7() =>
+    private static string ExpectedMegaSenaBlobJsonFor1Through7() =>
         """
         {
           "draws": [
-            {
-              "contest_id": 6,
-              "draw_date": "2026-04-27",
-              "numbers": [1,2,3,4,5,6],
-              "winners_6": 0,
-              "has_winner_6": false
-            },
-            {
-              "contest_id": 7,
-              "draw_date": "2026-04-27",
-              "numbers": [1,2,3,4,5,6],
-              "winners_6": 2,
-              "has_winner_6": true
-            }
+            { "contest_id": 1, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6], "winners_6": 0, "has_winner_6": false },
+            { "contest_id": 2, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6], "winners_6": 0, "has_winner_6": false },
+            { "contest_id": 3, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6], "winners_6": 0, "has_winner_6": false },
+            { "contest_id": 4, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6], "winners_6": 0, "has_winner_6": false },
+            { "contest_id": 5, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6], "winners_6": 0, "has_winner_6": false },
+            { "contest_id": 6, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5,6], "winners_6": 0, "has_winner_6": false },
+            { "contest_id": 7, "draw_date": "2026-04-27", "numbers": [1,2,3,4,5,6], "winners_6": 2, "has_winner_6": true }
           ]
         }
         """;
 
-    private static string ExpectedQuinaBlobJsonFor6And7() =>
+    private static string ExpectedQuinaBlobJsonFor1Through7() =>
         """
         {
           "draws": [
-            {
-              "contest_id": 6,
-              "draw_date": "2026-04-27",
-              "numbers": [1,2,3,4,5],
-              "winners_5": 0,
-              "has_winner_5": false
-            },
-            {
-              "contest_id": 7,
-              "draw_date": "2026-04-27",
-              "numbers": [1,2,3,4,5],
-              "winners_5": 3,
-              "has_winner_5": true
-            }
+            { "contest_id": 1, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5], "winners_5": 0, "has_winner_5": false },
+            { "contest_id": 2, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5], "winners_5": 0, "has_winner_5": false },
+            { "contest_id": 3, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5], "winners_5": 0, "has_winner_5": false },
+            { "contest_id": 4, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5], "winners_5": 0, "has_winner_5": false },
+            { "contest_id": 5, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5], "winners_5": 0, "has_winner_5": false },
+            { "contest_id": 6, "draw_date": "2026-04-01", "numbers": [1,2,3,4,5], "winners_5": 0, "has_winner_5": false },
+            { "contest_id": 7, "draw_date": "2026-04-27", "numbers": [1,2,3,4,5], "winners_5": 3, "has_winner_5": true }
           ]
         }
         """;

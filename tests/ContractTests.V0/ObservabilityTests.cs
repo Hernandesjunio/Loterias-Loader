@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using Lotofacil.Loader.Application;
 using Lotofacil.Loader.Domain;
-using Lotofacil.Loader.V0.Contract;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -13,9 +12,11 @@ public sealed class ObservabilityTests
     [Fact]
     public async Task Tracing_creates_root_activity_with_minimum_tags_and_events_and_debug_logs()
     {
-        var clock = new FakeClock(ContractTestHarness.Utc("2026-04-26T23:00:00Z")); // Domingo 20:00 SP
-        var delay = new FakeDelay(clock);
-        var api = new FakeApi(latestId: 10);
+        var clock = new FakeClock(ContractTestHarness.Utc("2026-04-26T23:00:00Z"));
+        var api = new FakeApi()
+            .WithAllResults(ContractTestHarness.AllResultsJson(
+                ContractTestHarness.ContestItemJson(id: 1, date: "2026-04-26"),
+                ContractTestHarness.ContestItemJson(id: 2, date: "2026-04-26", winners15: 1)));
         var seq = new EventSequencer();
         var blob = new InMemoryBlobStore(seq, ContractTestHarness.BlobWithDraws((123, "2026-04-26")));
         var state = new InMemoryStateStore(seq, new LoteriaLoaderState(123, "2026-04-26", clock.UtcNow, null));
@@ -37,7 +38,6 @@ public sealed class ObservabilityTests
 
         var services = new ServiceCollection();
         services.AddSingleton<IClock>(clock);
-        services.AddSingleton<IDelay>(delay);
         services.AddSingleton(api);
         services.AddSingleton<ILotteriesApiClient>(sp => sp.GetRequiredService<FakeApi>());
         services.AddSingleton<ILoteriaBlobStore>(blob);
@@ -50,7 +50,6 @@ public sealed class ObservabilityTests
             sp.GetRequiredService<ILogger<LoteriaResultsUpdateUseCase>>(),
             sp.GetRequiredService<IRunContext>(),
             sp.GetRequiredService<IClock>(),
-            sp.GetRequiredService<IDelay>(),
             sp.GetRequiredService<ILotteriesApiClient>(),
             sp.GetRequiredService<ILoteriaBlobStore>(),
             sp.GetRequiredService<ILoteriaStateStore>(),
@@ -82,12 +81,13 @@ public sealed class ObservabilityTests
         Assert.Equal("America/Sao_Paulo", root.GetTagItem("timezone") as string);
         Assert.Equal(180, root.GetTagItem("deadline_seconds"));
 
-        Assert.Equal(ReasonStop.EARLY_EXIT_ALREADY_LOADED_TODAY.ToString(), root.GetTagItem("reason_stop") as string);
+        Assert.Equal(ReasonStop.COMPLETED_SUCCESS.ToString(), root.GetTagItem("reason_stop") as string);
         Assert.NotNull(root.GetTagItem("retries_count"));
         Assert.NotNull(root.GetTagItem("rate_limit_wait_seconds_total"));
         Assert.NotNull(root.GetTagItem("elapsed_seconds"));
 
         Assert.Contains(root.Events, e => e.Name == "state.read.start");
+        Assert.Contains(root.Events, e => e.Name == "sync.all.start");
         Assert.Contains(root.Events, e => e.Name == "stop");
 
         Assert.Contains(loggerProvider.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("state.read.start", StringComparison.Ordinal));
